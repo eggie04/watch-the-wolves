@@ -7,6 +7,7 @@ internal static class Program
 {
     private const string ProjectDir = @"C:\opt\watch-the-wolves";
     private const string ManifestUrl = "https://streamio.watchthewolves.com/manifest.json";
+    private const int AddonPort = 7010;
     private static Process _addonProcess;
     private static Label _status;
     private static TextBox _log;
@@ -108,6 +109,12 @@ internal static class Program
         {
             throw new DirectoryNotFoundException("Project folder not found: " + ProjectDir);
         }
+        if (IsPortListening(AddonPort))
+        {
+            AppendLog("[WTW] addon already listening on port " + AddonPort + ".");
+            SetStatus("running");
+            return;
+        }
         if (_addonProcess != null && !_addonProcess.HasExited)
         {
             AppendLog("[WTW] addon already running.");
@@ -134,6 +141,24 @@ internal static class Program
         _addonProcess.BeginOutputReadLine();
         _addonProcess.BeginErrorReadLine();
         AppendLog("[WTW] addon process started.");
+    }
+
+    private static bool IsPortListening(int port)
+    {
+        var psi = new ProcessStartInfo();
+        psi.FileName = "cmd.exe";
+        psi.Arguments = "/c netstat -ano -p tcp | findstr LISTENING | findstr :" + port;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true;
+
+        using (var p = Process.Start(psi))
+        {
+            if (p == null) return false;
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(3000);
+            return !string.IsNullOrWhiteSpace(output);
+        }
     }
 
     private static void StopAddon()
