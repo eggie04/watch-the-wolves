@@ -1,27 +1,13 @@
 import process from "node:process"
-import stremioAddonSdk from "stremio-addon-sdk"
+import { createRequire } from "node:module"
 
-function resolveSdkExport(primary, fallback) {
-    if (typeof primary === "function") return primary
-    if (primary && typeof primary.default === "function") return primary.default
-    if (typeof fallback === "function") return fallback
-    if (fallback && typeof fallback.default === "function") return fallback.default
-    return null
-}
+const require = createRequire(import.meta.url)
+const stremioAddonSdk = require("stremio-addon-sdk")
+const AddonBuilder = stremioAddonSdk?.addonBuilder
+const serveHTTP = stremioAddonSdk?.serveHTTP
 
-const AddonBuilder = resolveSdkExport(
-    stremioAddonSdk?.addonBuilder,
-    stremioAddonSdk?.default?.addonBuilder
-)
-const serveHTTP = resolveSdkExport(
-    stremioAddonSdk?.serveHTTP,
-    stremioAddonSdk?.default?.serveHTTP
-)
-
-if (!AddonBuilder || !serveHTTP) {
-    console.error(
-        "Failed to resolve stremio-addon-sdk exports (addonBuilder/serveHTTP)."
-    )
+if (typeof AddonBuilder !== "function" || typeof serveHTTP !== "function") {
+    console.error("Invalid stremio-addon-sdk exports (addonBuilder/serveHTTP).")
     process.exit(1)
 }
 
