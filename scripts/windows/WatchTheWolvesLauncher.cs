@@ -6,9 +6,14 @@ using System.Windows.Forms;
 internal static class Program
 {
     private const string ProjectDir = @"C:\opt\watch-the-wolves";
+    private const string MediaMtxDir = @"C:\opt\mediamtx";
+    private const string MediaMtxExe = "mediamtx.exe";
     private const string ManifestUrl = "https://streamio.watchthewolves.com/manifest.json";
     private const int AddonPort = 7010;
+    private const int MediaMtxHlsPort = 8888;
+    private const int MediaMtxRtmpPort = 1935;
     private static Process _addonProcess;
+    private static Process _mediaMtxProcess;
     private static Label _status;
     private static TextBox _log;
 
@@ -79,6 +84,7 @@ internal static class Program
         try
         {
             StartCloudflaredService();
+            StartMediaMtxBackground();
             StartAddonBackground();
             SetStatus("running");
         }
@@ -143,6 +149,53 @@ internal static class Program
         AppendLog("[WTW] addon process started.");
     }
 
+    private static void StartMediaMtxBackground()
+    {
+        if (IsPortListening(MediaMtxHlsPort) || IsPortListening(MediaMtxRtmpPort))
+        {
+            AppendLog("[WTW] MediaMTX already listening (RTMP/HLS).");
+            return;
+        }
+        if (!Directory.Exists(MediaMtxDir))
+        {
+            AppendLog("[WTW] MediaMTX folder not found: " + MediaMtxDir);
+            return;
+        }
+
+        string exePath = Path.Combine(MediaMtxDir, MediaMtxExe);
+        if (!File.Exists(exePath))
+        {
+            AppendLog("[WTW] MediaMTX binary not found: " + exePath);
+            return;
+        }
+
+        if (_mediaMtxProcess != null && !_mediaMtxProcess.HasExited)
+        {
+            AppendLog("[WTW] MediaMTX already running.");
+            return;
+        }
+
+        var psi = new ProcessStartInfo();
+        psi.FileName = exePath;
+        psi.WorkingDirectory = MediaMtxDir;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+
+        _mediaMtxProcess = new Process();
+        _mediaMtxProcess.StartInfo = psi;
+        _mediaMtxProcess.EnableRaisingEvents = true;
+        _mediaMtxProcess.OutputDataReceived += delegate(object s, DataReceivedEventArgs e) { if (!string.IsNullOrEmpty(e.Data)) AppendLog("[MediaMTX] " + e.Data); };
+        _mediaMtxProcess.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e) { if (!string.IsNullOrEmpty(e.Data)) AppendLog("[MediaMTX] " + e.Data); };
+        _mediaMtxProcess.Exited += delegate { AppendLog("[WTW] MediaMTX exited."); };
+
+        _mediaMtxProcess.Start();
+        _mediaMtxProcess.BeginOutputReadLine();
+        _mediaMtxProcess.BeginErrorReadLine();
+        AppendLog("[WTW] MediaMTX process started.");
+    }
+
     private static bool IsPortListening(int port)
     {
         var psi = new ProcessStartInfo();
@@ -175,6 +228,19 @@ internal static class Program
         catch (Exception ex)
         {
             AppendLog("[WTW] stop error: " + ex.Message);
+        }
+        try
+        {
+            if (_mediaMtxProcess != null && !_mediaMtxProcess.HasExited)
+            {
+                _mediaMtxProcess.Kill();
+                _mediaMtxProcess.WaitForExit(3000);
+                AppendLog("[WTW] MediaMTX process stopped.");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog("[WTW] MediaMTX stop error: " + ex.Message);
         }
         SetStatus("stopped");
     }
