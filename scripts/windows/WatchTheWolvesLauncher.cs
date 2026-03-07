@@ -1,88 +1,186 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Windows.Forms;
 
 internal static class Program
 {
-    // Adjust these defaults if your server paths/hostnames differ.
     private const string ProjectDir = @"C:\opt\watch-the-wolves";
     private const string ManifestUrl = "https://streamio.watchthewolves.com/manifest.json";
+    private static Process _addonProcess;
+    private static Label _status;
+    private static TextBox _log;
 
     [STAThread]
     private static void Main()
     {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        Application.Run(CreateMainForm());
+    }
+
+    private static Form CreateMainForm()
+    {
+        var form = new Form();
+        form.Text = "Watch The Wolves";
+        form.Width = 720;
+        form.Height = 460;
+
+        var startButton = new Button();
+        startButton.Text = "Start";
+        startButton.Left = 20;
+        startButton.Top = 20;
+        startButton.Width = 100;
+        startButton.Click += delegate { StartAll(); };
+
+        var stopButton = new Button();
+        stopButton.Text = "Stop";
+        stopButton.Left = 130;
+        stopButton.Top = 20;
+        stopButton.Width = 100;
+        stopButton.Click += delegate { StopAddon(); };
+
+        var openButton = new Button();
+        openButton.Text = "Open Manifest";
+        openButton.Left = 240;
+        openButton.Top = 20;
+        openButton.Width = 130;
+        openButton.Click += delegate { OpenManifest(); };
+
+        _status = new Label();
+        _status.Left = 20;
+        _status.Top = 60;
+        _status.Width = 650;
+        _status.Text = "Status: idle";
+
+        _log = new TextBox();
+        _log.Multiline = true;
+        _log.ScrollBars = ScrollBars.Vertical;
+        _log.ReadOnly = true;
+        _log.Left = 20;
+        _log.Top = 90;
+        _log.Width = 660;
+        _log.Height = 320;
+
+        form.Controls.Add(startButton);
+        form.Controls.Add(stopButton);
+        form.Controls.Add(openButton);
+        form.Controls.Add(_status);
+        form.Controls.Add(_log);
+
+        form.FormClosing += delegate { StopAddon(); };
+        form.Shown += delegate { StartAll(); };
+        return form;
+    }
+
+    private static void StartAll()
+    {
         try
         {
             StartCloudflaredService();
-            StartAddonWindow();
-            OpenManifest();
+            StartAddonBackground();
+            SetStatus("running");
         }
         catch (Exception ex)
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = "/k echo [WTW] Launcher error: " + EscapeForCmd(ex.Message),
-                UseShellExecute = true
-            };
-            Process.Start(psi);
+            SetStatus("error");
+            AppendLog("[WTW] " + ex.Message);
         }
     }
 
     private static void StartCloudflaredService()
     {
-        var psi = new ProcessStartInfo
+        var psi = new ProcessStartInfo();
+        psi.FileName = "cmd.exe";
+        psi.Arguments = "/c sc start cloudflared";
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        using (var p = Process.Start(psi))
         {
-            FileName = "cmd.exe",
-            Arguments = "/c sc start cloudflared",
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        Process p = Process.Start(psi);
-        if (p != null)
-        {
-            p.WaitForExit(8000);
-            p.Dispose();
+            if (p != null) p.WaitForExit(8000);
         }
+        AppendLog("[WTW] cloudflared service start requested.");
     }
 
-    private static void StartAddonWindow()
+    private static void StartAddonBackground()
     {
         if (!Directory.Exists(ProjectDir))
         {
             throw new DirectoryNotFoundException("Project folder not found: " + ProjectDir);
         }
-
-        var command = "title Watch The Wolves - Stremio Addon && cd /d \"" + ProjectDir + "\" && npm run stremio:addon";
-        var psi = new ProcessStartInfo
+        if (_addonProcess != null && !_addonProcess.HasExited)
         {
-            FileName = "cmd.exe",
-            Arguments = "/k " + command,
-            UseShellExecute = true
-        };
+            AppendLog("[WTW] addon already running.");
+            return;
+        }
 
-        Process.Start(psi);
+        var psi = new ProcessStartInfo();
+        psi.FileName = "cmd.exe";
+        psi.Arguments = "/c npm run stremio:addon";
+        psi.WorkingDirectory = ProjectDir;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+
+        _addonProcess = new Process();
+        _addonProcess.StartInfo = psi;
+        _addonProcess.EnableRaisingEvents = true;
+        _addonProcess.OutputDataReceived += delegate(object s, DataReceivedEventArgs e) { if (!string.IsNullOrEmpty(e.Data)) AppendLog(e.Data); };
+        _addonProcess.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e) { if (!string.IsNullOrEmpty(e.Data)) AppendLog(e.Data); };
+        _addonProcess.Exited += delegate { SetStatus("stopped"); };
+
+        _addonProcess.Start();
+        _addonProcess.BeginOutputReadLine();
+        _addonProcess.BeginErrorReadLine();
+        AppendLog("[WTW] addon process started.");
+    }
+
+    private static void StopAddon()
+    {
+        try
+        {
+            if (_addonProcess != null && !_addonProcess.HasExited)
+            {
+                _addonProcess.Kill();
+                _addonProcess.WaitForExit(3000);
+                AppendLog("[WTW] addon process stopped.");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog("[WTW] stop error: " + ex.Message);
+        }
+        SetStatus("stopped");
     }
 
     private static void OpenManifest()
     {
-        var psi = new ProcessStartInfo
-        {
-            FileName = ManifestUrl,
-            UseShellExecute = true
-        };
-
+        var psi = new ProcessStartInfo();
+        psi.FileName = ManifestUrl;
+        psi.UseShellExecute = true;
         Process.Start(psi);
     }
 
-    private static string EscapeForCmd(string input)
+    private static void SetStatus(string value)
     {
-        return input
-            .Replace("^", "^^")
-            .Replace("&", "^&")
-            .Replace("|", "^|")
-            .Replace("<", "^<")
-            .Replace(">", "^>");
+        if (_status == null) return;
+        if (_status.InvokeRequired)
+        {
+            _status.BeginInvoke(new Action<string>(SetStatus), value);
+            return;
+        }
+        _status.Text = "Status: " + value;
+    }
+
+    private static void AppendLog(string line)
+    {
+        if (_log == null) return;
+        if (_log.InvokeRequired)
+        {
+            _log.BeginInvoke(new Action<string>(AppendLog), line);
+            return;
+        }
+        _log.AppendText(line + Environment.NewLine);
     }
 }

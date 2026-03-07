@@ -27,6 +27,7 @@ if ($IconPath -and (Test-Path $IconPath)) {
 $null = $compilerParams.ReferencedAssemblies.Add([System.Object].Assembly.Location)
 $null = $compilerParams.ReferencedAssemblies.Add([System.Diagnostics.Process].Assembly.Location)
 $null = $compilerParams.ReferencedAssemblies.Add([System.IO.File].Assembly.Location)
+$null = $compilerParams.ReferencedAssemblies.Add("System.Windows.Forms.dll")
 
 Add-Type `
     -TypeDefinition $sourceCode `
