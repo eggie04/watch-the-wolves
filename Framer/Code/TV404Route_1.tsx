@@ -1,0 +1,239 @@
+import { useLayoutEffect } from "react"
+import type { Override } from "framer"
+
+const TV_ROUTE = "/tv"
+const STREAM_URL =
+    "http://adultswim-vodlive.cdn.turner.com/live/rick-and-morty/stream.m3u8"
+const OVERLAY_ID = "tv-route-overlay"
+const HLS_SCRIPT_URLS = [
+    "https://cdn.jsdelivr.net/npm/hls.js@latest",
+    "https://unpkg.com/hls.js@latest",
+]
+
+let hlsScriptPromise: Promise<void> | null = null
+
+function loadHlsScript(): Promise<void> {
+    if ((window as any).Hls) return Promise.resolve()
+    if (hlsScriptPromise) return hlsScriptPromise
+
+    hlsScriptPromise = new Promise((resolve, reject) => {
+        let index = 0
+        const tryNext = () => {
+            if (index >= HLS_SCRIPT_URLS.length) {
+                reject(new Error("Failed to load hls.js from CDN"))
+                return
+            }
+
+            const script = document.createElement("script")
+            script.src = HLS_SCRIPT_URLS[index++]
+            script.async = true
+            script.onload = () => resolve()
+            script.onerror = () => tryNext()
+            document.head.appendChild(script)
+        }
+
+        tryNext()
+    })
+
+    return hlsScriptPromise
+}
+
+function canUseNativeHls(video: HTMLVideoElement) {
+    return Boolean(video.canPlayType("application/vnd.apple.mpegurl"))
+}
+
+function tryNativePlayback(
+    video: HTMLVideoElement,
+    streamUrl: string
+): Promise<boolean> {
+    return new Promise((resolve) => {
+        let settled = false
+        const finish = (ok: boolean) => {
+            if (settled) return
+            settled = true
+            video.removeEventListener("loadedmetadata", onReady)
+            video.removeEventListener("error", onError)
+            resolve(ok)
+        }
+
+        const onReady = () => finish(true)
+        const onError = () => finish(false)
+
+        video.addEventListener("loadedmetadata", onReady, { once: true })
+        video.addEventListener("error", onError, { once: true })
+        video.src = streamUrl
+
+        setTimeout(() => finish(false), 3500)
+    })
+}
+
+async function attachStream(video: HTMLVideoElement) {
+    const streamUrl =
+        window.location.protocol === "https:" && STREAM_URL.startsWith("http://")
+            ? STREAM_URL.replace(/^http:\/\//i, "https://")
+            : STREAM_URL
+
+    if (canUseNativeHls(video)) {
+        const nativeOk = await tryNativePlayback(video, streamUrl)
+        if (nativeOk) return
+    }
+
+    await loadHlsScript()
+    const Hls = (window as any).Hls
+    if (!Hls || !Hls.isSupported()) {
+        // Last fallback for apps/webviews with partial media support.
+        video.src = streamUrl
+        return
+    }
+
+    const hls = new Hls({ lowLatencyMode: true })
+    hls.loadSource(streamUrl)
+    hls.attachMedia(video)
+}
+
+async function safePlay(video: HTMLVideoElement) {
+    try {
+        await video.play()
+        return true
+    } catch {
+        return false
+    }
+}
+
+function buildTapToStart(onTap: () => void) {
+    const wrapper = document.createElement("div")
+    wrapper.style.position = "fixed"
+    wrapper.style.left = "50%"
+    wrapper.style.top = "50%"
+    wrapper.style.transform = "translate(-50%, -50%)"
+    wrapper.style.display = "flex"
+    wrapper.style.flexDirection = "column"
+    wrapper.style.alignItems = "center"
+    wrapper.style.gap = "10px"
+    wrapper.style.zIndex = "2147483647"
+
+    const button = document.createElement("button")
+    button.type = "button"
+    button.textContent = "Tap Here to Start Stream"
+    button.style.padding = "15px 22px"
+    button.style.border = "2px solid #93c5fd"
+    button.style.borderRadius = "12px"
+    button.style.background = "#0f172a"
+    button.style.color = "white"
+    button.style.fontSize = "18px"
+    button.style.fontWeight = "700"
+    button.style.cursor = "pointer"
+    button.style.boxShadow = "0 0 0 3px rgba(147,197,253,0.25)"
+    button.addEventListener("click", onTap, { once: true })
+
+    wrapper.appendChild(button)
+    return wrapper
+}
+
+function isTouchDevice() {
+    return (
+        "ontouchstart" in window ||
+        navigator.maxTouchPoints > 0 ||
+        window.matchMedia("(pointer: coarse)").matches
+    )
+}
+
+export const TV404Route: Override = () => {
+    useLayoutEffect(() => {
+        const path = window.location.pathname.replace(/\/+$/, "") || "/"
+        if (path !== TV_ROUTE) return
+
+        const body = document.body
+        const oldOverflow = body.style.overflow
+        body.style.overflow = "hidden"
+
+        const existing = document.getElementById(OVERLAY_ID) as
+            | HTMLDivElement
+            | null
+        if (existing) {
+            return
+        }
+
+        const overlay = document.createElement("div")
+        overlay.id = OVERLAY_ID
+        overlay.style.position = "fixed"
+        overlay.style.inset = "0"
+        overlay.style.background = "black"
+        overlay.style.zIndex = "2147483647"
+        overlay.style.margin = "0"
+        overlay.style.overflow = "hidden"
+        overlay.style.fontFamily = "sans-serif"
+
+        const video = document.createElement("video")
+        video.id = "player"
+        video.controls = !isTouchDevice()
+        video.autoplay = false
+        video.muted = true
+        video.playsInline = true
+        video.setAttribute("playsinline", "")
+        video.setAttribute("webkit-playsinline", "")
+        video.preload = "auto"
+        video.style.width = "100vw"
+        video.style.height = "100vh"
+        video.style.objectFit = "contain"
+        overlay.appendChild(video)
+        body.appendChild(overlay)
+
+        const showError = () => {
+            const message = document.createElement("div")
+            message.style.color = "white"
+            message.style.padding = "24px"
+            message.style.display = "flex"
+            message.style.flexDirection = "column"
+            message.style.gap = "10px"
+
+            const text = document.createElement("div")
+            text.textContent =
+                "Unable to load embedded stream. Try opening stream directly."
+            message.appendChild(text)
+
+            const directLink = document.createElement("a")
+            directLink.href = STREAM_URL
+            directLink.textContent = "Open Direct Stream"
+            directLink.style.color = "#7dd3fc"
+            directLink.style.textDecoration = "underline"
+            message.appendChild(directLink)
+            overlay.appendChild(message)
+        }
+
+        const startStream = async (preferSound: boolean) => {
+            try {
+                await attachStream(video)
+                if (preferSound) video.muted = false
+                const started = await safePlay(video)
+                if (!started) showError()
+            } catch (error) {
+                console.error(error)
+                showError()
+            }
+        }
+
+        if (isTouchDevice()) {
+            const tapButtonWrap = buildTapToStart(async () => {
+                await startStream(true)
+                video.controls = true
+                tapButtonWrap.remove()
+            })
+            overlay.appendChild(tapButtonWrap)
+        } else {
+            void startStream(false)
+        }
+
+        // Intentionally persist while on /tv to avoid Framer remount flicker.
+        return () => {
+            const currentPath =
+                window.location.pathname.replace(/\/+$/, "") || "/"
+            if (currentPath !== TV_ROUTE) {
+                overlay.remove()
+            }
+            body.style.overflow = oldOverflow
+        }
+    }, [])
+
+    return {}
+}

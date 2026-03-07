@@ -1,0 +1,17 @@
+{
+  "name": "watch-the-wolves-automation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "framer:list": "node --env-file=.env scripts/framer-sync.mjs --list-only",
+    "framer:sync": "node --env-file=.env scripts/framer-sync.mjs --no-publish",
+    "framer:push": "node --env-file=.env scripts/framer-sync.mjs --publish",
+    "framer:sync:force": "node --env-file=.env scripts/framer-sync.mjs --no-publish --allow-overwrite",
+    "framer:push:force": "node --env-file=.env scripts/framer-sync.mjs --publish --allow-overwrite",
+    "stremio:addon": "node --env-file=.env scripts/stremio-addon.mjs"
+  },
+  "dependencies": {
+    "framer-api": "^0.1.1",
+    "stremio-addon-sdk": "^1.6.10"
+  }
+}
