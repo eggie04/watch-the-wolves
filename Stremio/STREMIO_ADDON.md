@@ -10,6 +10,7 @@ Add these values:
 STREMIO_STREAM_URL=https://example.com/live/channel.m3u8
 # Optional
 # STREMIO_PORT=7010
+# STREMIO_PUBLIC_BASE_URL=https://streamio.watchthewolves.com
 # STREMIO_ADDON_ID=watchthewolves.test
 # STREMIO_ADDON_NAME=Watch The Wolves Test
 # STREMIO_ADDON_DESCRIPTION=My custom addon

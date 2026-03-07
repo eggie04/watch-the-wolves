@@ -40,6 +40,7 @@ if (typeof AddonBuilder !== "function" || typeof serveHTTP !== "function") {
 
 const PORT = Number(process.env.STREMIO_PORT || 7010)
 const ADDON_ID = String(process.env.STREMIO_ADDON_ID || "watchthewolves.test")
+const PUBLIC_BASE_URL = String(process.env.STREMIO_PUBLIC_BASE_URL || "").trim()
 const ADDON_NAME = String(
     process.env.STREMIO_ADDON_NAME || "Watch The Wolves Test"
 ).trim()
@@ -62,6 +63,18 @@ const DEFAULT_CHANNEL_DESCRIPTION = String(
 const DEFAULT_CHANNEL_POSTER_SHAPE = String(
     process.env.STREMIO_CHANNEL_POSTER_SHAPE || ""
 ).trim()
+
+function normalizeAssetUrl(value) {
+    const raw = String(value || "").trim()
+    if (!raw) return ""
+    if (/^https?:\/\//i.test(raw)) return raw
+    if (raw.startsWith("//")) return `https:${raw}`
+    if (raw.startsWith("/")) {
+        if (!PUBLIC_BASE_URL) return ""
+        return `${PUBLIC_BASE_URL.replace(/\/+$/, "")}${raw}`
+    }
+    return ""
+}
 
 function parseChannels() {
     if (CHANNELS_JSON) {
@@ -140,8 +153,8 @@ const manifest = {
     version: "0.0.1",
     name: ADDON_NAME,
     description: ADDON_DESCRIPTION,
-    logo: ADDON_LOGO || undefined,
-    background: ADDON_BACKGROUND || undefined,
+    logo: normalizeAssetUrl(ADDON_LOGO) || undefined,
+    background: normalizeAssetUrl(ADDON_BACKGROUND) || undefined,
     types: ["tv"],
     resources: ["catalog", "meta", "stream"],
     catalogs: [
@@ -164,10 +177,10 @@ builder.defineCatalogHandler(({ type, id }) => {
             id: item.id,
             type: "tv",
             name: item.name,
-            poster: item.poster || undefined,
+            poster: normalizeAssetUrl(item.poster) || undefined,
             posterShape: item.posterShape || undefined,
-            logo: item.logo || undefined,
-            background: item.background || undefined,
+            logo: normalizeAssetUrl(item.logo) || undefined,
+            background: normalizeAssetUrl(item.background) || undefined,
             description: item.description || undefined,
         })),
     })
@@ -182,10 +195,10 @@ builder.defineMetaHandler(({ type, id }) => {
             id: channel.id,
             type: "tv",
             name: channel.name,
-            poster: channel.poster || undefined,
+            poster: normalizeAssetUrl(channel.poster) || undefined,
             posterShape: channel.posterShape || undefined,
-            logo: channel.logo || undefined,
-            background: channel.background || undefined,
+            logo: normalizeAssetUrl(channel.logo) || undefined,
+            background: normalizeAssetUrl(channel.background) || undefined,
             description: channel.description || undefined,
         },
     })
