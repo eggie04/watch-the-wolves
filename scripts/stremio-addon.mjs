@@ -1,7 +1,29 @@
 import process from "node:process"
 import stremioAddonSdk from "stremio-addon-sdk"
 
-const { addonBuilder, serveHTTP } = stremioAddonSdk
+function resolveSdkExport(primary, fallback) {
+    if (typeof primary === "function") return primary
+    if (primary && typeof primary.default === "function") return primary.default
+    if (typeof fallback === "function") return fallback
+    if (fallback && typeof fallback.default === "function") return fallback.default
+    return null
+}
+
+const AddonBuilder = resolveSdkExport(
+    stremioAddonSdk?.addonBuilder,
+    stremioAddonSdk?.default?.addonBuilder
+)
+const serveHTTP = resolveSdkExport(
+    stremioAddonSdk?.serveHTTP,
+    stremioAddonSdk?.default?.serveHTTP
+)
+
+if (!AddonBuilder || !serveHTTP) {
+    console.error(
+        "Failed to resolve stremio-addon-sdk exports (addonBuilder/serveHTTP)."
+    )
+    process.exit(1)
+}
 
 const PORT = Number(process.env.STREMIO_PORT || 7010)
 const ADDON_ID = String(process.env.STREMIO_ADDON_ID || "watchthewolves.test")
@@ -119,7 +141,7 @@ const manifest = {
     idPrefixes: channels.map((item) => item.id),
 }
 
-const builder = new addonBuilder(manifest)
+const builder = new AddonBuilder(manifest)
 
 builder.defineCatalogHandler(({ type, id }) => {
     if (type !== "tv" || id !== CATALOG_ID) return Promise.resolve({ metas: [] })
