@@ -3,7 +3,7 @@ import type { Override } from "framer"
 
 const TV_ROUTE = "/tv"
 const OVERLAY_ID = "tv-route-overlay"
-const BUILD_TAG = "TV UI v8"
+const BUILD_TAG = "TV UI v9"
 const DEFAULT_CHANNEL_ID = "wolves-live"
 const STREMIO_CATALOG_URL =
     "https://streamio.watchthewolves.com/catalog/tv/eggtv-catalog.json"
@@ -31,6 +31,31 @@ const HLS_SCRIPT_URLS = [
 
 let hlsScriptPromise: Promise<void> | null = null
 let activeHls: any = null
+const PREHIDE_STYLE_ID = "tv-route-prehide-style"
+
+function installPrehideIfNeeded() {
+    if (typeof window === "undefined" || typeof document === "undefined") return
+    const path = window.location.pathname.replace(/\/+$/, "") || "/"
+    if (path !== TV_ROUTE) return
+    if (document.getElementById(PREHIDE_STYLE_ID)) return
+
+    const style = document.createElement("style")
+    style.id = PREHIDE_STYLE_ID
+    style.textContent = `
+html, body { background: #000 !important; }
+body { opacity: 0 !important; transition: opacity 120ms linear; }
+`
+    document.head.appendChild(style)
+}
+
+function clearPrehide() {
+    if (typeof document === "undefined") return
+    const style = document.getElementById(PREHIDE_STYLE_ID)
+    if (style) style.remove()
+    document.body.style.opacity = "1"
+}
+
+installPrehideIfNeeded()
 
 function loadHlsScript(): Promise<void> {
     if ((window as any).Hls) return Promise.resolve()
@@ -206,6 +231,7 @@ export const TV404Route: Override = () => {
         overlay.style.margin = "0"
         overlay.style.overflow = "hidden"
         overlay.style.fontFamily = "sans-serif"
+        clearPrehide()
 
         const video = document.createElement("video")
         video.id = "player"
