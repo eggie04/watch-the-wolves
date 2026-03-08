@@ -370,6 +370,13 @@ export const TV404Route: Override = () => {
             message.appendChild(directLink)
             overlay.appendChild(message)
         }
+        let guideChannels: Array<{
+            id: string
+            name: string
+            streamUrl: string
+            poster?: string
+            description?: string
+        }> = CHANNELS
 
         const startStream = async (
             channel: (typeof CHANNELS)[number],
@@ -378,6 +385,7 @@ export const TV404Route: Override = () => {
             try {
                 selectedChannel = channel
                 setSelectedChannel(channel.id)
+                renderGuideButtons(guideChannels)
                 await attachStream(video, channel.streamUrl)
                 if (preferSound) video.muted = false
                 let started = await safePlay(video)
@@ -492,19 +500,11 @@ export const TV404Route: Override = () => {
                 switchButton.style.position = "relative"
                 switchButton.style.textAlign = "left"
                 switchButton.style.boxShadow = "inset 0 -2px 0 #e11d48"
-
-                const liveTag = document.createElement("div")
-                liveTag.textContent = "LIVE"
-                liveTag.style.position = "absolute"
-                liveTag.style.top = "8px"
-                liveTag.style.left = "8px"
-                liveTag.style.padding = "2px 6px"
-                liveTag.style.fontSize = "10px"
-                liveTag.style.fontWeight = "800"
-                liveTag.style.borderRadius = "5px"
-                liveTag.style.background = "#e11d48"
-                liveTag.style.color = "white"
-                liveTag.style.letterSpacing = "0.4px"
+                const isActive = selectedChannel.id === channel.id
+                if (isActive) {
+                    switchButton.style.borderColor = "#93c5fd"
+                    switchButton.style.boxShadow = "inset 0 -2px 0 #3b82f6"
+                }
 
                 const row = document.createElement("div")
                 row.style.display = "grid"
@@ -536,15 +536,14 @@ export const TV404Route: Override = () => {
                 title.style.lineHeight = "1.2"
 
                 const subtitle = document.createElement("div")
-                subtitle.textContent = "Now Playing"
+                subtitle.textContent = isActive ? "Now Playing" : "Available"
                 subtitle.style.fontSize = "11px"
-                subtitle.style.color = "#94a3b8"
+                subtitle.style.color = isActive ? "#93c5fd" : "#94a3b8"
 
                 textWrap.appendChild(title)
                 textWrap.appendChild(subtitle)
                 row.appendChild(thumb)
                 row.appendChild(textWrap)
-                switchButton.appendChild(liveTag)
                 switchButton.appendChild(row)
 
                 switchButton.addEventListener("click", async () => {
@@ -569,6 +568,7 @@ export const TV404Route: Override = () => {
                     description: item?.description || channel.description,
                 }
             })
+            guideChannels = enriched
             renderGuideButtons(enriched)
             renderPickerCards(enriched)
         })()
