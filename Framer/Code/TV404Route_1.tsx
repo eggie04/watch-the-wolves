@@ -2,15 +2,28 @@ import { useLayoutEffect } from "react"
 import type { Override } from "framer"
 
 const TV_ROUTE = "/tv"
-const STREAM_URL =
-    "https://video.watchthewolves.com/wolves-live/index.m3u8"
 const OVERLAY_ID = "tv-route-overlay"
+const DEFAULT_CHANNEL_ID = "wolves-live"
+const CHANNELS = [
+    {
+        id: "wolves-live",
+        name: "Wolves Live",
+        streamUrl: "https://video.watchthewolves.com/wolves-live/index.m3u8",
+    },
+    {
+        id: "rick-morty",
+        name: "Rick and Morty",
+        streamUrl:
+            "https://adultswim-vodlive.cdn.turner.com/live/rick-and-morty/stream.m3u8",
+    },
+]
 const HLS_SCRIPT_URLS = [
     "https://cdn.jsdelivr.net/npm/hls.js@latest",
     "https://unpkg.com/hls.js@latest",
 ]
 
 let hlsScriptPromise: Promise<void> | null = null
+let activeHls: any = null
 
 function loadHlsScript(): Promise<void> {
     if ((window as any).Hls) return Promise.resolve()
@@ -42,6 +55,16 @@ function canUseNativeHls(video: HTMLVideoElement) {
     return Boolean(video.canPlayType("application/vnd.apple.mpegurl"))
 }
 
+function teardownStream(video: HTMLVideoElement) {
+    if (activeHls && typeof activeHls.destroy === "function") {
+        activeHls.destroy()
+    }
+    activeHls = null
+    video.pause()
+    video.removeAttribute("src")
+    video.load()
+}
+
 function tryNativePlayback(
     video: HTMLVideoElement,
     streamUrl: string
@@ -68,10 +91,8 @@ function tryNativePlayback(
 }
 
 async function attachStream(video: HTMLVideoElement) {
-    const streamUrl =
-        window.location.protocol === "https:" && STREAM_URL.startsWith("http://")
-            ? STREAM_URL.replace(/^http:\/\//i, "https://")
-            : STREAM_URL
+    const streamUrl = getSelectedChannel().streamUrl
+    teardownStream(video)
 
     if (canUseNativeHls(video)) {
         const nativeOk = await tryNativePlayback(video, streamUrl)
@@ -89,6 +110,7 @@ async function attachStream(video: HTMLVideoElement) {
     const hls = new Hls({ lowLatencyMode: true })
     hls.loadSource(streamUrl)
     hls.attachMedia(video)
+    activeHls = hls
 }
 
 async function safePlay(video: HTMLVideoElement) {
@@ -138,6 +160,22 @@ function isTouchDevice() {
     )
 }
 
+function getSelectedChannel() {
+    const params = new URLSearchParams(window.location.search)
+    const ch = params.get("ch")
+    return (
+        CHANNELS.find((item) => item.id === ch) ||
+        CHANNELS.find((item) => item.id === DEFAULT_CHANNEL_ID) ||
+        CHANNELS[0]
+    )
+}
+
+function setSelectedChannel(channelId: string) {
+    const url = new URL(window.location.href)
+    url.searchParams.set("ch", channelId)
+    window.history.replaceState({}, "", url.toString())
+}
+
 export const TV404Route: Override = () => {
     useLayoutEffect(() => {
         const path = window.location.pathname.replace(/\/+$/, "") || "/"
@@ -178,6 +216,26 @@ export const TV404Route: Override = () => {
         video.style.objectFit = "contain"
         overlay.appendChild(video)
         body.appendChild(overlay)
+        let selectedChannel = getSelectedChannel()
+
+        const channelBar = document.createElement("div")
+        channelBar.style.position = "fixed"
+        channelBar.style.top = "16px"
+        channelBar.style.left = "16px"
+        channelBar.style.display = "flex"
+        channelBar.style.gap = "8px"
+        channelBar.style.flexWrap = "wrap"
+        channelBar.style.zIndex = "2147483647"
+        overlay.appendChild(channelBar)
+
+        const setActiveButton = () => {
+            Array.from(channelBar.children).forEach((node) => {
+                const button = node as HTMLButtonElement
+                const isActive = button.dataset.channelId === selectedChannel.id
+                button.style.background = isActive ? "#2563eb" : "#111827"
+                button.style.borderColor = isActive ? "#93c5fd" : "#374151"
+            })
+        }
 
         const showError = () => {
             const message = document.createElement("div")
@@ -193,7 +251,7 @@ export const TV404Route: Override = () => {
             message.appendChild(text)
 
             const directLink = document.createElement("a")
-            directLink.href = STREAM_URL
+            directLink.href = selectedChannel.streamUrl
             directLink.textContent = "Open Direct Stream"
             directLink.style.color = "#7dd3fc"
             directLink.style.textDecoration = "underline"
@@ -213,6 +271,29 @@ export const TV404Route: Override = () => {
             }
         }
 
+        CHANNELS.forEach((channel) => {
+            const button = document.createElement("button")
+            button.type = "button"
+            button.dataset.channelId = channel.id
+            button.textContent = channel.name
+            button.style.padding = "10px 14px"
+            button.style.border = "1px solid #374151"
+            button.style.borderRadius = "10px"
+            button.style.background = "#111827"
+            button.style.color = "white"
+            button.style.fontSize = "14px"
+            button.style.cursor = "pointer"
+            button.addEventListener("click", async () => {
+                selectedChannel = channel
+                setSelectedChannel(channel.id)
+                setActiveButton()
+                video.muted = false
+                await startStream(true)
+            })
+            channelBar.appendChild(button)
+        })
+        setActiveButton()
+
         if (isTouchDevice()) {
             const tapButtonWrap = buildTapToStart(async () => {
                 await startStream(true)
@@ -229,6 +310,7 @@ export const TV404Route: Override = () => {
             const currentPath =
                 window.location.pathname.replace(/\/+$/, "") || "/"
             if (currentPath !== TV_ROUTE) {
+                teardownStream(video)
                 overlay.remove()
             }
             body.style.overflow = oldOverflow
