@@ -3,19 +3,25 @@ import type { Override } from "framer"
 
 const TV_ROUTE = "/tv"
 const OVERLAY_ID = "tv-route-overlay"
-const BUILD_TAG = "TV UI v4"
+const BUILD_TAG = "TV UI v5"
 const DEFAULT_CHANNEL_ID = "wolves-live"
+const STREMIO_CATALOG_URL =
+    "https://streamio.watchthewolves.com/catalog/tv/eggtv-catalog.json"
 const CHANNELS = [
     {
         id: "wolves-live",
         name: "Wolves Live",
         streamUrl: "https://video.watchthewolves.com/wolves-live/index.m3u8",
+        poster: "https://streamio.watchthewolves.com/assets/stremio/eggtv.png",
+        description: "Watch The Wolves live stream.",
     },
     {
         id: "rick-morty",
         name: "Rick and Morty",
         streamUrl:
             "https://adultswim-vodlive.cdn.turner.com/live/rick-and-morty/stream.m3u8",
+        poster: "https://image.tmdb.org/t/p/original/WGRQ8FpjkDTzivQJ43t94bOuY0.jpg",
+        description: "24/7 Rick and Morty stream.",
     },
 ]
 const HLS_SCRIPT_URLS = [
@@ -160,6 +166,30 @@ function isTouchDevice() {
     )
 }
 
+async function getCatalogMetadata() {
+    try {
+        const response = await fetch(STREMIO_CATALOG_URL, {
+            method: "GET",
+            mode: "cors",
+        })
+        if (!response.ok) return new Map()
+        const json = await response.json()
+        const metas = Array.isArray(json?.metas) ? json.metas : []
+        const map = new Map<string, { poster?: string; description?: string }>()
+        metas.forEach((meta: any) => {
+            const id = String(meta?.id || "").trim()
+            if (!id) return
+            map.set(id, {
+                poster: String(meta?.poster || "").trim() || undefined,
+                description: String(meta?.description || "").trim() || undefined,
+            })
+        })
+        return map
+    } catch {
+        return new Map()
+    }
+}
+
 function getChannelById(channelId: string | null) {
     if (!channelId) return null
     return CHANNELS.find((item) => item.id === channelId) || null
@@ -261,9 +291,10 @@ export const TV404Route: Override = () => {
         const pickerGrid = document.createElement("div")
         pickerGrid.style.display = "grid"
         pickerGrid.style.gridTemplateColumns =
-            "repeat(auto-fit, minmax(220px, 1fr))"
-        pickerGrid.style.gap = "14px"
+            "repeat(auto-fit, minmax(220px, 240px))"
+        pickerGrid.style.gap = "18px"
         pickerGrid.style.width = "min(900px, 100%)"
+        pickerGrid.style.justifyContent = "center"
         picker.appendChild(pickerGrid)
 
         const channelSwitchBar = document.createElement("div")
@@ -337,6 +368,71 @@ export const TV404Route: Override = () => {
             }
         }
 
+        const renderPickerCards = (
+            channels: Array<{
+                id: string
+                name: string
+                streamUrl: string
+                poster?: string
+                description?: string
+            }>
+        ) => {
+            pickerGrid.innerHTML = ""
+            channels.forEach((channel) => {
+                const button = document.createElement("button")
+                button.type = "button"
+                button.textContent = ""
+                button.style.border = "1px solid #334155"
+                button.style.borderRadius = "14px"
+                button.style.background = "rgba(15,23,42,0.92)"
+                button.style.color = "white"
+                button.style.cursor = "pointer"
+                button.style.overflow = "hidden"
+                button.style.padding = "0"
+                button.style.textAlign = "left"
+                button.style.display = "flex"
+                button.style.flexDirection = "column"
+
+                const poster = document.createElement("div")
+                poster.style.width = "100%"
+                poster.style.aspectRatio = "2 / 3"
+                poster.style.backgroundColor = "#0b1220"
+                if (channel.poster) {
+                    poster.style.backgroundImage = `url("${channel.poster}")`
+                    poster.style.backgroundSize = "cover"
+                    poster.style.backgroundPosition = "center"
+                }
+
+                const content = document.createElement("div")
+                content.style.padding = "12px"
+                content.style.display = "flex"
+                content.style.flexDirection = "column"
+                content.style.gap = "6px"
+
+                const title = document.createElement("div")
+                title.textContent = channel.name
+                title.style.fontSize = "20px"
+                title.style.fontWeight = "700"
+
+                const description = document.createElement("div")
+                description.textContent =
+                    channel.description || "Select channel to watch."
+                description.style.fontSize = "13px"
+                description.style.lineHeight = "1.35"
+                description.style.color = "#cbd5e1"
+
+                content.appendChild(title)
+                content.appendChild(description)
+                button.appendChild(poster)
+                button.appendChild(content)
+
+                button.addEventListener("click", async () => {
+                    await startStream(channel, true)
+                })
+                pickerGrid.appendChild(button)
+            })
+        }
+
         CHANNELS.forEach((channel) => {
             const button = document.createElement("button")
             button.type = "button"
@@ -370,6 +466,20 @@ export const TV404Route: Override = () => {
             })
             channelSwitchBar.appendChild(switchButton)
         })
+        renderPickerCards(CHANNELS)
+
+        void (async () => {
+            const metadata = await getCatalogMetadata()
+            const enriched = CHANNELS.map((channel) => {
+                const item = metadata.get(channel.id)
+                return {
+                    ...channel,
+                    poster: item?.poster || channel.poster,
+                    description: item?.description || channel.description,
+                }
+            })
+            renderPickerCards(enriched)
+        })()
 
         const presetChannel = getChannelById(
             new URLSearchParams(window.location.search).get("ch")
