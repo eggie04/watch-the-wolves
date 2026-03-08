@@ -63,6 +63,9 @@ const DEFAULT_CHANNEL_DESCRIPTION = String(
 const DEFAULT_CHANNEL_POSTER_SHAPE = String(
     process.env.STREMIO_CHANNEL_POSTER_SHAPE || ""
 ).trim()
+const HLS_NOT_WEB_READY = String(
+    process.env.STREMIO_HLS_NOT_WEB_READY || "0"
+).trim() === "1"
 
 function normalizeAssetUrl(value) {
     const raw = String(value || "").trim()
@@ -216,7 +219,10 @@ builder.defineStreamHandler(({ type, id }) => {
                 name: "Primary",
                 title: channel.name,
                 url: channel.streamUrl,
-                behaviorHints: looksLikeHls ? { notWebReady: true } : undefined,
+                behaviorHints:
+                    looksLikeHls && HLS_NOT_WEB_READY
+                        ? { notWebReady: true }
+                        : undefined,
             },
         ],
     })
