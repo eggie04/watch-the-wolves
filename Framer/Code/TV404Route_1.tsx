@@ -272,12 +272,13 @@ export const TV404Route: Override = () => {
         picker.style.inset = "0"
         picker.style.display = "flex"
         picker.style.flexDirection = "column"
-        picker.style.justifyContent = "center"
+        picker.style.justifyContent = "flex-start"
         picker.style.alignItems = "center"
-        picker.style.padding = "24px"
+        picker.style.padding = "max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom))"
         picker.style.background =
             "radial-gradient(circle at 20% 20%, rgba(37,99,235,0.25), rgba(0,0,0,0.92) 42%)"
         picker.style.zIndex = "2147483647"
+        picker.style.overflowY = "auto"
         overlay.appendChild(picker)
 
         const pickerTitle = document.createElement("div")
@@ -285,27 +286,41 @@ export const TV404Route: Override = () => {
         pickerTitle.style.color = "white"
         pickerTitle.style.fontSize = "clamp(24px, 4vw, 40px)"
         pickerTitle.style.fontWeight = "700"
+        pickerTitle.style.marginTop = "max(26px, env(safe-area-inset-top))"
         pickerTitle.style.marginBottom = "16px"
+        pickerTitle.style.textAlign = "center"
         picker.appendChild(pickerTitle)
 
         const pickerGrid = document.createElement("div")
         pickerGrid.style.display = "grid"
-        pickerGrid.style.gridTemplateColumns =
-            "repeat(auto-fit, minmax(220px, 240px))"
+        pickerGrid.style.gridTemplateColumns = "repeat(2, minmax(0, 1fr))"
         pickerGrid.style.gap = "18px"
-        pickerGrid.style.width = "min(900px, 100%)"
+        pickerGrid.style.width = "min(900px, 100vw - 32px)"
         pickerGrid.style.justifyContent = "center"
+        pickerGrid.style.paddingBottom = "20px"
         picker.appendChild(pickerGrid)
 
         const channelSwitchBar = document.createElement("div")
         channelSwitchBar.style.position = "fixed"
-        channelSwitchBar.style.top = "16px"
+        channelSwitchBar.style.top = "max(12px, env(safe-area-inset-top))"
         channelSwitchBar.style.left = "16px"
         channelSwitchBar.style.display = "none"
         channelSwitchBar.style.gap = "8px"
         channelSwitchBar.style.flexWrap = "wrap"
         channelSwitchBar.style.zIndex = "2147483647"
         overlay.appendChild(channelSwitchBar)
+
+        const applyResponsiveLayout = () => {
+            const mobile = window.innerWidth <= 760
+            const narrow = window.innerWidth <= 420
+            pickerGrid.style.gridTemplateColumns = mobile
+                ? narrow
+                    ? "minmax(0, 1fr)"
+                    : "repeat(2, minmax(0, 1fr))"
+                : "repeat(auto-fit, minmax(220px, 240px))"
+            pickerGrid.style.gap = mobile ? "12px" : "18px"
+            pickerTitle.style.marginBottom = mobile ? "12px" : "16px"
+        }
 
         const showError = () => {
             const message = document.createElement("div")
@@ -392,6 +407,7 @@ export const TV404Route: Override = () => {
                 button.style.textAlign = "left"
                 button.style.display = "flex"
                 button.style.flexDirection = "column"
+                button.style.minHeight = "100%"
 
                 const poster = document.createElement("div")
                 poster.style.width = "100%"
@@ -411,7 +427,7 @@ export const TV404Route: Override = () => {
 
                 const title = document.createElement("div")
                 title.textContent = channel.name
-                title.style.fontSize = "20px"
+                title.style.fontSize = "clamp(16px, 2vw, 20px)"
                 title.style.fontWeight = "700"
 
                 const description = document.createElement("div")
@@ -431,6 +447,7 @@ export const TV404Route: Override = () => {
                 })
                 pickerGrid.appendChild(button)
             })
+            applyResponsiveLayout()
         }
 
         CHANNELS.forEach((channel) => {
@@ -487,9 +504,11 @@ export const TV404Route: Override = () => {
         if (presetChannel) {
             void startStream(presetChannel, !isTouchDevice())
         }
+        window.addEventListener("resize", applyResponsiveLayout)
 
         // Intentionally persist while on /tv to avoid Framer remount flicker.
         return () => {
+            window.removeEventListener("resize", applyResponsiveLayout)
             const currentPath =
                 window.location.pathname.replace(/\/+$/, "") || "/"
             if (currentPath !== TV_ROUTE) {
