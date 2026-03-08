@@ -3,7 +3,7 @@ import type { Override } from "framer"
 
 const TV_ROUTE = "/tv"
 const OVERLAY_ID = "tv-route-overlay"
-const BUILD_TAG = "TV UI v3"
+const BUILD_TAG = "TV UI v4"
 const DEFAULT_CHANNEL_ID = "wolves-live"
 const CHANNELS = [
     {
@@ -91,8 +91,7 @@ function tryNativePlayback(
     })
 }
 
-async function attachStream(video: HTMLVideoElement) {
-    const streamUrl = getSelectedChannel().streamUrl
+async function attachStream(video: HTMLVideoElement, streamUrl: string) {
     teardownStream(video)
 
     if (canUseNativeHls(video)) {
@@ -123,7 +122,7 @@ async function safePlay(video: HTMLVideoElement) {
     }
 }
 
-function buildTapToStart(onTap: () => void) {
+function buildTapToStart(onTap: () => void, label = "Tap Here to Start Stream") {
     const wrapper = document.createElement("div")
     wrapper.style.position = "fixed"
     wrapper.style.left = "50%"
@@ -137,7 +136,7 @@ function buildTapToStart(onTap: () => void) {
 
     const button = document.createElement("button")
     button.type = "button"
-    button.textContent = "Tap Here to Start Stream"
+    button.textContent = label
     button.style.padding = "15px 22px"
     button.style.border = "2px solid #93c5fd"
     button.style.borderRadius = "12px"
@@ -161,11 +160,16 @@ function isTouchDevice() {
     )
 }
 
+function getChannelById(channelId: string | null) {
+    if (!channelId) return null
+    return CHANNELS.find((item) => item.id === channelId) || null
+}
+
 function getSelectedChannel() {
     const params = new URLSearchParams(window.location.search)
     const ch = params.get("ch")
     return (
-        CHANNELS.find((item) => item.id === ch) ||
+        getChannelById(ch) ||
         CHANNELS.find((item) => item.id === DEFAULT_CHANNEL_ID) ||
         CHANNELS[0]
     )
@@ -233,24 +237,44 @@ export const TV404Route: Override = () => {
         buildTag.style.zIndex = "2147483647"
         overlay.appendChild(buildTag)
 
-        const channelBar = document.createElement("div")
-        channelBar.style.position = "fixed"
-        channelBar.style.top = "16px"
-        channelBar.style.left = "16px"
-        channelBar.style.display = "flex"
-        channelBar.style.gap = "8px"
-        channelBar.style.flexWrap = "wrap"
-        channelBar.style.zIndex = "2147483647"
-        overlay.appendChild(channelBar)
+        const picker = document.createElement("div")
+        picker.style.position = "fixed"
+        picker.style.inset = "0"
+        picker.style.display = "flex"
+        picker.style.flexDirection = "column"
+        picker.style.justifyContent = "center"
+        picker.style.alignItems = "center"
+        picker.style.padding = "24px"
+        picker.style.background =
+            "radial-gradient(circle at 20% 20%, rgba(37,99,235,0.25), rgba(0,0,0,0.92) 42%)"
+        picker.style.zIndex = "2147483647"
+        overlay.appendChild(picker)
 
-        const setActiveButton = () => {
-            Array.from(channelBar.children).forEach((node) => {
-                const button = node as HTMLButtonElement
-                const isActive = button.dataset.channelId === selectedChannel.id
-                button.style.background = isActive ? "#2563eb" : "#111827"
-                button.style.borderColor = isActive ? "#93c5fd" : "#374151"
-            })
-        }
+        const pickerTitle = document.createElement("div")
+        pickerTitle.textContent = "Choose a channel"
+        pickerTitle.style.color = "white"
+        pickerTitle.style.fontSize = "clamp(24px, 4vw, 40px)"
+        pickerTitle.style.fontWeight = "700"
+        pickerTitle.style.marginBottom = "16px"
+        picker.appendChild(pickerTitle)
+
+        const pickerGrid = document.createElement("div")
+        pickerGrid.style.display = "grid"
+        pickerGrid.style.gridTemplateColumns =
+            "repeat(auto-fit, minmax(220px, 1fr))"
+        pickerGrid.style.gap = "14px"
+        pickerGrid.style.width = "min(900px, 100%)"
+        picker.appendChild(pickerGrid)
+
+        const channelSwitchBar = document.createElement("div")
+        channelSwitchBar.style.position = "fixed"
+        channelSwitchBar.style.top = "16px"
+        channelSwitchBar.style.left = "16px"
+        channelSwitchBar.style.display = "none"
+        channelSwitchBar.style.gap = "8px"
+        channelSwitchBar.style.flexWrap = "wrap"
+        channelSwitchBar.style.zIndex = "2147483647"
+        overlay.appendChild(channelSwitchBar)
 
         const showError = () => {
             const message = document.createElement("div")
@@ -274,12 +298,39 @@ export const TV404Route: Override = () => {
             overlay.appendChild(message)
         }
 
-        const startStream = async (preferSound: boolean) => {
+        let retryWrap: HTMLDivElement | null = null
+        const clearRetry = () => {
+            if (retryWrap) {
+                retryWrap.remove()
+                retryWrap = null
+            }
+        }
+
+        const startStream = async (
+            channel: (typeof CHANNELS)[number],
+            preferSound: boolean
+        ) => {
             try {
-                await attachStream(video)
+                selectedChannel = channel
+                setSelectedChannel(channel.id)
+                clearRetry()
+                await attachStream(video, channel.streamUrl)
                 if (preferSound) video.muted = false
                 const started = await safePlay(video)
-                if (!started) showError()
+                if (!started) {
+                    retryWrap = buildTapToStart(
+                        async () => {
+                            retryWrap = null
+                            await startStream(channel, true)
+                        },
+                        "Tap to Start Playback"
+                    )
+                    overlay.appendChild(retryWrap)
+                    return
+                }
+                picker.style.display = "none"
+                channelSwitchBar.style.display = "flex"
+                video.controls = true
             } catch (error) {
                 console.error(error)
                 showError()
@@ -289,35 +340,42 @@ export const TV404Route: Override = () => {
         CHANNELS.forEach((channel) => {
             const button = document.createElement("button")
             button.type = "button"
-            button.dataset.channelId = channel.id
             button.textContent = channel.name
-            button.style.padding = "10px 14px"
+            button.style.padding = "18px 16px"
             button.style.border = "1px solid #374151"
-            button.style.borderRadius = "10px"
-            button.style.background = "#111827"
+            button.style.borderRadius = "14px"
+            button.style.background = "rgba(17,24,39,0.9)"
             button.style.color = "white"
-            button.style.fontSize = "14px"
+            button.style.fontSize = "18px"
+            button.style.fontWeight = "700"
             button.style.cursor = "pointer"
+            button.style.textAlign = "left"
             button.addEventListener("click", async () => {
-                selectedChannel = channel
-                setSelectedChannel(channel.id)
-                setActiveButton()
-                video.muted = false
-                await startStream(true)
+                await startStream(channel, true)
             })
-            channelBar.appendChild(button)
-        })
-        setActiveButton()
+            pickerGrid.appendChild(button)
 
-        if (isTouchDevice()) {
-            const tapButtonWrap = buildTapToStart(async () => {
-                await startStream(true)
-                video.controls = true
-                tapButtonWrap.remove()
+            const switchButton = document.createElement("button")
+            switchButton.type = "button"
+            switchButton.textContent = channel.name
+            switchButton.style.padding = "10px 14px"
+            switchButton.style.border = "1px solid #374151"
+            switchButton.style.borderRadius = "10px"
+            switchButton.style.background = "#111827"
+            switchButton.style.color = "white"
+            switchButton.style.fontSize = "14px"
+            switchButton.style.cursor = "pointer"
+            switchButton.addEventListener("click", async () => {
+                await startStream(channel, true)
             })
-            overlay.appendChild(tapButtonWrap)
-        } else {
-            void startStream(false)
+            channelSwitchBar.appendChild(switchButton)
+        })
+
+        const presetChannel = getChannelById(
+            new URLSearchParams(window.location.search).get("ch")
+        )
+        if (presetChannel) {
+            void startStream(presetChannel, !isTouchDevice())
         }
 
         // Intentionally persist while on /tv to avoid Framer remount flicker.
