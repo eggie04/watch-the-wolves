@@ -3,7 +3,7 @@ import type { Override } from "framer"
 
 const TV_ROUTE = "/tv"
 const STREAM_URL =
-    "http://adultswim-vodlive.cdn.turner.com/live/rick-and-morty/stream.m3u8"
+    "https://video.watchthewolves.com/wolves-live/index.m3u8"
 const OVERLAY_ID = "tv-route-overlay"
 const HLS_SCRIPT_URLS = [
     "https://cdn.jsdelivr.net/npm/hls.js@latest",
