@@ -312,7 +312,7 @@ export const TV404Route: Override = () => {
 
         const applyResponsiveLayout = () => {
             const mobile = window.innerWidth <= 760
-            const narrow = window.innerWidth <= 420
+            const narrow = window.innerWidth <= 359
             pickerGrid.style.gridTemplateColumns = mobile
                 ? narrow
                     ? "minmax(0, 1fr)"
@@ -320,6 +320,21 @@ export const TV404Route: Override = () => {
                 : "repeat(auto-fit, minmax(220px, 240px))"
             pickerGrid.style.gap = mobile ? "12px" : "18px"
             pickerTitle.style.marginBottom = mobile ? "12px" : "16px"
+            Array.from(pickerGrid.children).forEach((node) => {
+                const button = node as HTMLButtonElement
+                const poster = button.querySelector(
+                    "[data-role='poster']"
+                ) as HTMLDivElement | null
+                const desc = button.querySelector(
+                    "[data-role='desc']"
+                ) as HTMLDivElement | null
+                if (poster) {
+                    poster.style.aspectRatio = mobile ? "3 / 4" : "2 / 3"
+                }
+                if (desc) {
+                    desc.style.display = mobile ? "none" : "block"
+                }
+            })
         }
 
         const showError = () => {
@@ -410,6 +425,7 @@ export const TV404Route: Override = () => {
                 button.style.minHeight = "100%"
 
                 const poster = document.createElement("div")
+                poster.dataset.role = "poster"
                 poster.style.width = "100%"
                 poster.style.aspectRatio = "2 / 3"
                 poster.style.backgroundColor = "#0b1220"
@@ -431,6 +447,7 @@ export const TV404Route: Override = () => {
                 title.style.fontWeight = "700"
 
                 const description = document.createElement("div")
+                description.dataset.role = "desc"
                 description.textContent =
                     channel.description || "Select channel to watch."
                 description.style.fontSize = "13px"
