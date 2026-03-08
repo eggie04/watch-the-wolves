@@ -3,7 +3,7 @@ import type { Override } from "framer"
 
 const TV_ROUTE = "/tv"
 const OVERLAY_ID = "tv-route-overlay"
-const BUILD_TAG = "TV UI v5"
+const BUILD_TAG = "TV UI v6"
 const DEFAULT_CHANNEL_ID = "wolves-live"
 const STREMIO_CATALOG_URL =
     "https://streamio.watchthewolves.com/catalog/tv/eggtv-catalog.json"
@@ -304,11 +304,50 @@ export const TV404Route: Override = () => {
         channelSwitchBar.style.position = "fixed"
         channelSwitchBar.style.top = "max(12px, env(safe-area-inset-top))"
         channelSwitchBar.style.left = "16px"
+        channelSwitchBar.style.right = "16px"
         channelSwitchBar.style.display = "none"
         channelSwitchBar.style.gap = "8px"
-        channelSwitchBar.style.flexWrap = "wrap"
+        channelSwitchBar.style.flexWrap = "nowrap"
+        channelSwitchBar.style.overflowX = "auto"
+        channelSwitchBar.style.padding = "6px"
+        channelSwitchBar.style.borderRadius = "12px"
+        channelSwitchBar.style.background = "rgba(2,6,23,0.6)"
+        channelSwitchBar.style.backdropFilter = "blur(8px)"
+        channelSwitchBar.style.opacity = "0"
+        channelSwitchBar.style.pointerEvents = "none"
+        channelSwitchBar.style.transition = "opacity 180ms ease"
         channelSwitchBar.style.zIndex = "2147483647"
         overlay.appendChild(channelSwitchBar)
+        let isPlaybackMode = false
+        let guideVisible = false
+        let hideGuideTimer: ReturnType<typeof setTimeout> | null = null
+
+        const clearGuideTimer = () => {
+            if (hideGuideTimer) {
+                clearTimeout(hideGuideTimer)
+                hideGuideTimer = null
+            }
+        }
+
+        const hideGuide = () => {
+            guideVisible = false
+            channelSwitchBar.style.opacity = "0"
+            channelSwitchBar.style.pointerEvents = "none"
+        }
+
+        const showGuide = () => {
+            if (!isPlaybackMode) return
+            guideVisible = true
+            channelSwitchBar.style.opacity = "1"
+            channelSwitchBar.style.pointerEvents = "auto"
+        }
+
+        const scheduleGuideHide = (delayMs = 3000) => {
+            clearGuideTimer()
+            hideGuideTimer = setTimeout(() => {
+                hideGuide()
+            }, delayMs)
+        }
 
         const applyResponsiveLayout = () => {
             const mobile = window.innerWidth <= 760
@@ -392,6 +431,9 @@ export const TV404Route: Override = () => {
                 picker.style.display = "none"
                 channelSwitchBar.style.display = "flex"
                 video.controls = true
+                isPlaybackMode = true
+                showGuide()
+                scheduleGuideHide(2200)
             } catch (error) {
                 console.error(error)
                 showError()
@@ -468,23 +510,6 @@ export const TV404Route: Override = () => {
         }
 
         CHANNELS.forEach((channel) => {
-            const button = document.createElement("button")
-            button.type = "button"
-            button.textContent = channel.name
-            button.style.padding = "18px 16px"
-            button.style.border = "1px solid #374151"
-            button.style.borderRadius = "14px"
-            button.style.background = "rgba(17,24,39,0.9)"
-            button.style.color = "white"
-            button.style.fontSize = "18px"
-            button.style.fontWeight = "700"
-            button.style.cursor = "pointer"
-            button.style.textAlign = "left"
-            button.addEventListener("click", async () => {
-                await startStream(channel, true)
-            })
-            pickerGrid.appendChild(button)
-
             const switchButton = document.createElement("button")
             switchButton.type = "button"
             switchButton.textContent = channel.name
@@ -497,6 +522,8 @@ export const TV404Route: Override = () => {
             switchButton.style.cursor = "pointer"
             switchButton.addEventListener("click", async () => {
                 await startStream(channel, true)
+                showGuide()
+                scheduleGuideHide()
             })
             channelSwitchBar.appendChild(switchButton)
         })
@@ -522,10 +549,21 @@ export const TV404Route: Override = () => {
             void startStream(presetChannel, !isTouchDevice())
         }
         window.addEventListener("resize", applyResponsiveLayout)
+        video.addEventListener("click", () => {
+            if (!isPlaybackMode) return
+            if (guideVisible) {
+                hideGuide()
+                clearGuideTimer()
+                return
+            }
+            showGuide()
+            scheduleGuideHide()
+        })
 
         // Intentionally persist while on /tv to avoid Framer remount flicker.
         return () => {
             window.removeEventListener("resize", applyResponsiveLayout)
+            clearGuideTimer()
             const currentPath =
                 window.location.pathname.replace(/\/+$/, "") || "/"
             if (currentPath !== TV_ROUTE) {
