@@ -3,6 +3,7 @@ import type { Override } from "framer"
 
 const TV_ROUTE = "/tv"
 const OVERLAY_ID = "tv-route-overlay"
+const BUILD_TAG = "TV UI v3"
 const DEFAULT_CHANNEL_ID = "wolves-live"
 const CHANNELS = [
     {
@@ -217,6 +218,20 @@ export const TV404Route: Override = () => {
         overlay.appendChild(video)
         body.appendChild(overlay)
         let selectedChannel = getSelectedChannel()
+
+        const buildTag = document.createElement("div")
+        buildTag.textContent = BUILD_TAG
+        buildTag.style.position = "fixed"
+        buildTag.style.right = "16px"
+        buildTag.style.top = "16px"
+        buildTag.style.padding = "8px 10px"
+        buildTag.style.borderRadius = "8px"
+        buildTag.style.background = "rgba(17,24,39,0.85)"
+        buildTag.style.border = "1px solid #374151"
+        buildTag.style.color = "#d1d5db"
+        buildTag.style.fontSize = "12px"
+        buildTag.style.zIndex = "2147483647"
+        overlay.appendChild(buildTag)
 
         const channelBar = document.createElement("div")
         channelBar.style.position = "fixed"
