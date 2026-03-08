@@ -228,7 +228,7 @@ builder.defineStreamHandler(({ type, id }) => {
     })
 })
 
-serveHTTP(builder.getInterface(), { port: PORT, static: "assets/stremio" })
+serveHTTP(builder.getInterface(), { port: PORT, static: "/assets" })
 console.log(`Stremio addon running on http://127.0.0.1:${PORT}/manifest.json`)
 console.log(`Addon name: ${ADDON_NAME}`)
 console.log(`Channels: ${channels.length}`)
