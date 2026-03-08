@@ -3,7 +3,7 @@ import type { Override } from "framer"
 
 const TV_ROUTE = "/tv"
 const OVERLAY_ID = "tv-route-overlay"
-const BUILD_TAG = "TV UI v7"
+const BUILD_TAG = "TV UI v8"
 const DEFAULT_CHANNEL_ID = "wolves-live"
 const STREMIO_CATALOG_URL =
     "https://streamio.watchthewolves.com/catalog/tv/eggtv-catalog.json"
@@ -126,36 +126,6 @@ async function safePlay(video: HTMLVideoElement) {
     } catch {
         return false
     }
-}
-
-function buildTapToStart(onTap: () => void, label = "Tap Here to Start Stream") {
-    const wrapper = document.createElement("div")
-    wrapper.style.position = "fixed"
-    wrapper.style.left = "50%"
-    wrapper.style.top = "50%"
-    wrapper.style.transform = "translate(-50%, -50%)"
-    wrapper.style.display = "flex"
-    wrapper.style.flexDirection = "column"
-    wrapper.style.alignItems = "center"
-    wrapper.style.gap = "10px"
-    wrapper.style.zIndex = "2147483647"
-
-    const button = document.createElement("button")
-    button.type = "button"
-    button.textContent = label
-    button.style.padding = "15px 22px"
-    button.style.border = "2px solid #93c5fd"
-    button.style.borderRadius = "12px"
-    button.style.background = "#0f172a"
-    button.style.color = "white"
-    button.style.fontSize = "18px"
-    button.style.fontWeight = "700"
-    button.style.cursor = "pointer"
-    button.style.boxShadow = "0 0 0 3px rgba(147,197,253,0.25)"
-    button.addEventListener("click", onTap, { once: true })
-
-    wrapper.appendChild(button)
-    return wrapper
 }
 
 function isTouchDevice() {
@@ -309,12 +279,12 @@ export const TV404Route: Override = () => {
         channelSwitchBar.style.flexDirection = "column"
         channelSwitchBar.style.alignItems = "stretch"
         channelSwitchBar.style.gap = "10px"
-        channelSwitchBar.style.maxWidth = "min(44vw, 220px)"
+        channelSwitchBar.style.maxWidth = "min(46vw, 250px)"
         channelSwitchBar.style.maxHeight = "72vh"
         channelSwitchBar.style.overflowY = "auto"
         channelSwitchBar.style.padding = "8px"
         channelSwitchBar.style.borderRadius = "12px"
-        channelSwitchBar.style.background = "rgba(2,6,23,0.68)"
+        channelSwitchBar.style.background = "rgba(2,6,23,0.74)"
         channelSwitchBar.style.backdropFilter = "blur(8px)"
         channelSwitchBar.style.opacity = "0"
         channelSwitchBar.style.pointerEvents = "none"
@@ -401,14 +371,6 @@ export const TV404Route: Override = () => {
             overlay.appendChild(message)
         }
 
-        let retryWrap: HTMLDivElement | null = null
-        const clearRetry = () => {
-            if (retryWrap) {
-                retryWrap.remove()
-                retryWrap = null
-            }
-        }
-
         const startStream = async (
             channel: (typeof CHANNELS)[number],
             preferSound: boolean
@@ -416,21 +378,14 @@ export const TV404Route: Override = () => {
             try {
                 selectedChannel = channel
                 setSelectedChannel(channel.id)
-                clearRetry()
                 await attachStream(video, channel.streamUrl)
                 if (preferSound) video.muted = false
-                const started = await safePlay(video)
-                if (!started) {
-                    retryWrap = buildTapToStart(
-                        async () => {
-                            retryWrap = null
-                            await startStream(channel, true)
-                        },
-                        "Tap to Start Playback"
-                    )
-                    overlay.appendChild(retryWrap)
-                    return
+                let started = await safePlay(video)
+                if (!started && !video.muted) {
+                    video.muted = true
+                    started = await safePlay(video)
                 }
+                if (!started) return
                 picker.style.display = "none"
                 channelSwitchBar.style.display = "flex"
                 video.controls = true
@@ -512,27 +467,96 @@ export const TV404Route: Override = () => {
             applyResponsiveLayout()
         }
 
-        CHANNELS.forEach((channel) => {
-            const switchButton = document.createElement("button")
-            switchButton.type = "button"
-            switchButton.textContent = channel.name
-            switchButton.style.padding = "12px 12px"
-            switchButton.style.border = "1px solid #374151"
-            switchButton.style.borderRadius = "10px"
-            switchButton.style.background = "#111827"
-            switchButton.style.color = "white"
-            switchButton.style.fontSize = "15px"
-            switchButton.style.fontWeight = "600"
-            switchButton.style.textAlign = "left"
-            switchButton.style.whiteSpace = "normal"
-            switchButton.style.cursor = "pointer"
-            switchButton.addEventListener("click", async () => {
-                await startStream(channel, true)
-                showGuide()
-                scheduleGuideHide()
+        const renderGuideButtons = (
+            channels: Array<{
+                id: string
+                name: string
+                streamUrl: string
+                poster?: string
+                description?: string
+            }>
+        ) => {
+            channelSwitchBar.innerHTML = ""
+            channels.forEach((channel) => {
+                const switchButton = document.createElement("button")
+                switchButton.type = "button"
+                switchButton.style.padding = "0"
+                switchButton.style.border = "1px solid #334155"
+                switchButton.style.borderRadius = "10px"
+                switchButton.style.background = "rgba(15,23,42,0.94)"
+                switchButton.style.color = "white"
+                switchButton.style.cursor = "pointer"
+                switchButton.style.display = "flex"
+                switchButton.style.flexDirection = "column"
+                switchButton.style.overflow = "hidden"
+                switchButton.style.position = "relative"
+                switchButton.style.textAlign = "left"
+                switchButton.style.boxShadow = "inset 0 -2px 0 #e11d48"
+
+                const liveTag = document.createElement("div")
+                liveTag.textContent = "LIVE"
+                liveTag.style.position = "absolute"
+                liveTag.style.top = "8px"
+                liveTag.style.left = "8px"
+                liveTag.style.padding = "2px 6px"
+                liveTag.style.fontSize = "10px"
+                liveTag.style.fontWeight = "800"
+                liveTag.style.borderRadius = "5px"
+                liveTag.style.background = "#e11d48"
+                liveTag.style.color = "white"
+                liveTag.style.letterSpacing = "0.4px"
+
+                const row = document.createElement("div")
+                row.style.display = "grid"
+                row.style.gridTemplateColumns = "54px 1fr"
+                row.style.gap = "8px"
+                row.style.padding = "10px 10px 12px"
+
+                const thumb = document.createElement("div")
+                thumb.style.width = "54px"
+                thumb.style.height = "54px"
+                thumb.style.borderRadius = "8px"
+                thumb.style.background = "#0b1220"
+                thumb.style.backgroundSize = "cover"
+                thumb.style.backgroundPosition = "center"
+                if (channel.poster) {
+                    thumb.style.backgroundImage = `url("${channel.poster}")`
+                }
+
+                const textWrap = document.createElement("div")
+                textWrap.style.display = "flex"
+                textWrap.style.flexDirection = "column"
+                textWrap.style.justifyContent = "center"
+                textWrap.style.gap = "2px"
+
+                const title = document.createElement("div")
+                title.textContent = channel.name
+                title.style.fontSize = "14px"
+                title.style.fontWeight = "700"
+                title.style.lineHeight = "1.2"
+
+                const subtitle = document.createElement("div")
+                subtitle.textContent = "Now Playing"
+                subtitle.style.fontSize = "11px"
+                subtitle.style.color = "#94a3b8"
+
+                textWrap.appendChild(title)
+                textWrap.appendChild(subtitle)
+                row.appendChild(thumb)
+                row.appendChild(textWrap)
+                switchButton.appendChild(liveTag)
+                switchButton.appendChild(row)
+
+                switchButton.addEventListener("click", async () => {
+                    await startStream(channel, true)
+                    showGuide()
+                    scheduleGuideHide()
+                })
+                channelSwitchBar.appendChild(switchButton)
             })
-            channelSwitchBar.appendChild(switchButton)
-        })
+        }
+
+        renderGuideButtons(CHANNELS)
         renderPickerCards(CHANNELS)
 
         void (async () => {
@@ -545,6 +569,7 @@ export const TV404Route: Override = () => {
                     description: item?.description || channel.description,
                 }
             })
+            renderGuideButtons(enriched)
             renderPickerCards(enriched)
         })()
 
@@ -555,20 +580,49 @@ export const TV404Route: Override = () => {
             void startStream(presetChannel, !isTouchDevice())
         }
         window.addEventListener("resize", applyResponsiveLayout)
-        video.addEventListener("click", () => {
-            if (!isPlaybackMode) return
-            if (guideVisible) {
-                hideGuide()
-                clearGuideTimer()
-                return
+        let onDesktopMove: ((event: MouseEvent) => void) | null = null
+        let onDesktopKey: ((event: KeyboardEvent) => void) | null = null
+        if (isTouchDevice()) {
+            video.addEventListener("touchstart", () => {
+                if (!isPlaybackMode) return
+                if (guideVisible) {
+                    hideGuide()
+                    clearGuideTimer()
+                    return
+                }
+                showGuide()
+                scheduleGuideHide()
+            })
+        } else {
+            onDesktopMove = () => {
+                if (!isPlaybackMode) return
+                showGuide()
+                scheduleGuideHide(2400)
             }
-            showGuide()
-            scheduleGuideHide()
-        })
+            onDesktopKey = (event) => {
+                if (!isPlaybackMode) return
+                if (event.key.toLowerCase() !== "g") return
+                if (guideVisible) {
+                    hideGuide()
+                    clearGuideTimer()
+                    return
+                }
+                showGuide()
+                scheduleGuideHide()
+            }
+            overlay.addEventListener("mousemove", onDesktopMove)
+            window.addEventListener("keydown", onDesktopKey)
+        }
 
         // Intentionally persist while on /tv to avoid Framer remount flicker.
         return () => {
             window.removeEventListener("resize", applyResponsiveLayout)
+            if (onDesktopMove) {
+                overlay.removeEventListener("mousemove", onDesktopMove)
+            }
+            if (onDesktopKey) {
+                window.removeEventListener("keydown", onDesktopKey)
+            }
             clearGuideTimer()
             const currentPath =
                 window.location.pathname.replace(/\/+$/, "") || "/"
