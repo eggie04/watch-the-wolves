@@ -3,7 +3,7 @@ import type { Override } from "framer"
 
 const TV_ROUTE = "/tv"
 const OVERLAY_ID = "tv-route-overlay"
-const BUILD_TAG = "TV UI v9"
+const BUILD_TAG = "TV UI v10"
 const DEFAULT_CHANNEL_ID = "wolves-live"
 const STREMIO_CATALOG_URL =
     "https://streamio.watchthewolves.com/catalog/tv/eggtv-catalog.json"
@@ -52,6 +52,8 @@ function clearPrehide() {
     if (typeof document === "undefined") return
     const style = document.getElementById(PREHIDE_STYLE_ID)
     if (style) style.remove()
+    document.documentElement.classList.remove("tv-prehide")
+    document.documentElement.classList.add("tv-prehide-ready")
     document.body.style.opacity = "1"
 }
 
