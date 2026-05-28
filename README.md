@@ -34,4 +34,3 @@ Use `.env.example` as the source of truth. Do not commit real credentials.
 ## Notes for reviewers
 
 - This repository contains automation/support tooling, not the full production frontend app.
-- Sensitive credentials are intentionally excluded from version control.
