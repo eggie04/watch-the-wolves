@@ -170,15 +170,70 @@ function setTvmFeedConfig_(config) {
   }
 }
 
-const WTW_IMPORT_STATE_KEY = "WTW_IMPORT_FULL_2025_STATE_V4";
+const WTW_IMPORT_STATE_KEY = "WTW_IMPORT_FULL_SCHEDULE_STATE_V5";
 const WTW_IMPORT_RESUME_HANDLER = "resumeImportFullNBASchedule2025";
 const WTW_IMPORT_DIAG_KEY = "WTW_IMPORT_FULL_2025_LAST_DIAG";
 const WTW_IMPORT_BATCH_SIZE = 100;
 const WTW_WOLVES_TEAM_ID = 1610612750;
 const WTW_NBA_TEAM_SCHEDULE_API_URL = "https://www.nba.com/timberwolves/api/schedule";
 const WTW_NBA_JERSEY_CACHE_KEY = "WTW_NBA_SCHEDULE_JERSEY_MAP_V1";
-const WTW_NBA_JERSEY_SOURCE_SEASONS = ["2024-25", "2025-26"];
 const WTW_JINA_PROXY_PREFIX = "https://r.jina.ai/http://";
+
+function getRelevantEspnSeasonYears_() {
+  const now = new Date();
+  const calendarYear = now.getFullYear();
+  const currentSeasonEndYear = now.getMonth() >= 6 ? calendarYear + 1 : calendarYear;
+  return [currentSeasonEndYear - 1, currentSeasonEndYear];
+}
+
+function getRelevantNbaSeasonLabels_() {
+  return getRelevantEspnSeasonYears_().map(year =>
+    `${year - 1}-${String(year).slice(-2)}`
+  );
+}
+
+function formatEspnDate_(date) {
+  return Utilities.formatDate(date, "UTC", "yyyyMMdd");
+}
+
+function buildEspnScoreboardSegments_() {
+  const segments = [];
+  getRelevantEspnSeasonYears_().forEach(seasonYear => {
+    // NBA seasons run from preseason in the prior September through June.
+    for (let offset = 0; offset < 10; offset++) {
+      const monthStart = new Date(Date.UTC(seasonYear - 1, 8 + offset, 1));
+      const monthEnd = new Date(Date.UTC(
+        monthStart.getUTCFullYear(),
+        monthStart.getUTCMonth() + 1,
+        0
+      ));
+      const start = formatEspnDate_(monthStart);
+      const end = formatEspnDate_(monthEnd);
+      segments.push({
+        url: `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${start}-${end}&limit=1000`,
+        seasonYear,
+        label: `${seasonYear - 1}-${String(seasonYear).slice(-2)} ${Utilities.formatDate(monthStart, "UTC", "MMM")}`,
+      });
+    }
+  });
+  return segments;
+}
+
+function getEspnSeasonTypeLabel_(event) {
+  const type = Number(event?.season?.type || 0);
+  if (type === 1) return "Preseason";
+  if (type === 2) return "Regular Season";
+  if (type === 3) return "Postseason";
+  if (type === 4) return "All-Star";
+  return event?.season?.slug || "Unknown";
+}
+
+function getEspnScoreValue_(competitor) {
+  const raw = competitor?.score;
+  if (raw && typeof raw === "object" && raw.value != null) return Number(raw.value);
+  if (raw !== "" && raw != null && isFinite(Number(raw))) return Number(raw);
+  return "";
+}
 
 function writeImportDiag_(payload) {
   try {
@@ -251,8 +306,19 @@ function fetchNbaScheduleJerseyMapFromApi_() {
   let wolvesGamesWithJersey = 0;
   const seasonStats = {};
 
-  WTW_NBA_JERSEY_SOURCE_SEASONS.forEach(seasonLabel => {
-    const root = fetchTeamScheduleSeasonJsonViaProxy_(seasonLabel);
+  getRelevantNbaSeasonLabels_().forEach(seasonLabel => {
+    let root;
+    try {
+      root = fetchTeamScheduleSeasonJsonViaProxy_(seasonLabel);
+    } catch (e) {
+      Logger.log(`WARN jersey schedule unavailable for ${seasonLabel}: ${e}`);
+      seasonStats[seasonLabel] = {
+        wolvesGamesSeen: 0,
+        wolvesGamesWithJersey: 0,
+        error: String(e),
+      };
+      return;
+    }
     const schedule = root?.scheduleData?.schedule || [];
     let seasonSeen = 0;
     let seasonWithJersey = 0;
@@ -605,14 +671,9 @@ function importFullNBASchedule2025() {
   // Write canonical header after old-schema extraction is complete.
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
 
-  const urls = [
-    { url: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/16/schedule?seasontype=1&season=2025", seasonType: "Preseason" },
-    { url: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/16/schedule?seasontype=2&season=2025", seasonType: "Regular Season" },
-    { url: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/16/schedule?seasontype=3&season=2025", seasonType: "Postseason" },
-    { url: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/16/schedule?seasontype=1&season=2026", seasonType: "Preseason" },
-    { url: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/16/schedule?seasontype=2&season=2026", seasonType: "Regular Season" },
-    { url: "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/16/schedule?seasontype=3&season=2026", seasonType: "Postseason" },
-  ];
+  // ESPN's team schedule endpoint began returning 403 in 2026. The scoreboard
+  // endpoint remains available, so fetch it in monthly slices and keep Wolves games.
+  const urls = buildEspnScoreboardSegments_();
 
   if (state.cursor >= urls.length) {
     props.deleteProperty(WTW_IMPORT_STATE_KEY);
@@ -639,20 +700,30 @@ function importFullNBASchedule2025() {
   let batchStart = 0;
   let batchEndExclusive = 0;
   try {
-    const response = UrlFetchApp.fetch(season.url, { muteHttpExceptions: true });
+    const response = UrlFetchApp.fetch(season.url, {
+      muteHttpExceptions: true,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "Mozilla/5.0",
+      },
+    });
     const code = Number(response?.getResponseCode?.() || 0);
     if (code < 200 || code >= 300) {
-      Logger.log(`ERROR ${season.seasonType}: ESPN status ${code}`);
-      throw new Error(`ESPN schedule request failed for ${season.seasonType} (${code})`);
+      throw new Error(`ESPN scoreboard request failed for ${season.label} (${code})`);
     }
 
     const data = JSON.parse(response.getContentText());
-    const events = data.events || [];
+    const events = (data.events || []).filter(event => {
+      if (Number(event?.season?.year || 0) !== season.seasonYear) return false;
+      const competitors = event?.competitions?.[0]?.competitors || [];
+      return competitors.some(c => String(c?.team?.id || "") === "16");
+    });
     seasonEventCount = events.length;
     batchStart = Math.min(Math.max(0, Number(state.eventCursor) || 0), seasonEventCount);
     batchEndExclusive = Math.min(seasonEventCount, batchStart + WTW_IMPORT_BATCH_SIZE);
     importCheckpoint_(runId, startedMs, "espn_loaded", {
-      seasonType: season.seasonType,
+      segment: season.label,
+      seasonYear: season.seasonYear,
       seasonIndex: state.cursor,
       eventCount: seasonEventCount,
       batchStart,
@@ -674,12 +745,19 @@ function importFullNBASchedule2025() {
       const formattedDate = Utilities.formatDate(d, Session.getScriptTimeZone(), "MMM dd, yyyy");
       const time = Utilities.formatDate(d, Session.getScriptTimeZone(), "h:mm a");
 
-      const ws = typeof wolves.score?.value === "number" ? wolves.score.value : "";
-      const os = typeof opp.score?.value === "number" ? opp.score.value : "";
-      const result = ws !== "" && os !== "" ? (ws > os ? "W" : "L") : "TBD";
+      const statusState = String(event?.status?.type?.state || "").toLowerCase();
+      const completed = event?.status?.type?.completed === true;
+      const rawWolvesScore = getEspnScoreValue_(wolves);
+      const rawOpponentScore = getEspnScoreValue_(opp);
+      const ws = statusState === "pre" ? "" : rawWolvesScore;
+      const os = statusState === "pre" ? "" : rawOpponentScore;
+      let result = "TBD";
+      if (completed && ws !== "" && os !== "") {
+        result = ws > os ? "W" : ws < os ? "L" : "T";
+      }
 
       let status = "Scheduled";
-      if (result === "W" || result === "L") status = "Final";
+      if (completed) status = "Final";
       else if (event?.status?.type?.shortDetail) status = event.status.type.shortDetail.trim();
       else if (event?.status?.type?.description) status = event.status.type.description.trim();
 
@@ -762,16 +840,18 @@ function importFullNBASchedule2025() {
         natFlag,
         status,
         jersey,
-        season.seasonType,
+        getEspnSeasonTypeLabel_(event),
       ]);
     }
   } catch (e) {
-    Logger.log(`ERROR ${season.seasonType}: ${e}`);
-    importCheckpoint_(runId, startedMs, "espn_error", {
-      seasonType: season.seasonType,
+    // A future month may not be published yet. Log it and advance so one
+    // unavailable segment cannot block all subsequent schedule refreshes.
+    Logger.log(`WARN ${season.label}: ${e}`);
+    importCheckpoint_(runId, startedMs, "espn_segment_skipped", {
+      segment: season.label,
+      seasonYear: season.seasonYear,
       error: String(e),
     });
-    throw e;
   }
 
   if (rows.length) {
@@ -833,13 +913,14 @@ function importFullNBASchedule2025() {
     props.setProperty(WTW_IMPORT_STATE_KEY, JSON.stringify(state));
     scheduleResumeImportTrigger_();
     Logger.log(
-      `Imported ${season.seasonType} events ${batchStart}-${Math.max(batchStart, batchEndExclusive) - 1} of ${seasonEventCount}. ` +
+      `Imported ${season.label} events ${batchStart}-${Math.max(batchStart, batchEndExclusive) - 1} of ${seasonEventCount}. ` +
       `Continuing at season index ${state.cursor}, event index ${state.eventCursor}.`
     );
     importCheckpoint_(runId, startedMs, "state_saved", {
       nextCursor: state.cursor,
       nextEventCursor: state.eventCursor,
-      seasonType: season.seasonType,
+      segment: season.label,
+      seasonYear: season.seasonYear,
       processedInRun: rows.length,
       seasonEventCount,
       finishedSeason,
