@@ -2,12 +2,30 @@ import { useLayoutEffect } from "react"
 import type { Override } from "framer"
 
 const TV_ROUTE = "/tv"
+const SECRET_LOOP_ROUTE = "/jerry70"
 const OVERLAY_ID = "tv-route-overlay"
-const BUILD_TAG = "TV UI v10"
-const DEFAULT_CHANNEL_ID = "wolves-live"
+const BUILD_TAG = "TV UI v13"
+const DEFAULT_CHANNEL_ID = "rick-morty"
+const STREAM_HEALTHCHECK_TIMEOUT_MS = 3200
+const PLAYBACK_READY_TIMEOUT_MS = 4500
+const PLAYBACK_START_TIMEOUT_MS = 10000
+const SECRET_LOOP_VIDEO_URL =
+    "https://video.watchthewolves.com/jerry70.mp4"
+const NBA_TV_POSTER =
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 900'%3E%3Cdefs%3E%3ClinearGradient id='bg' x1='0' x2='0' y1='0' y2='1'%3E%3Cstop offset='0' stop-color='%230b1220'/%3E%3Cstop offset='1' stop-color='%2302030a'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='600' height='900' fill='url(%23bg)'/%3E%3Crect x='55' y='80' width='490' height='740' rx='36' fill='%230a0f1e' stroke='%23243a63' stroke-width='6'/%3E%3Crect x='80' y='120' width='220' height='440' rx='20' fill='%23cf123f'/%3E%3Crect x='300' y='120' width='220' height='440' rx='20' fill='%231d4ed8'/%3E%3Crect x='88' y='128' width='204' height='424' rx='16' fill='none' stroke='%23ffffff' stroke-opacity='.35' stroke-width='4'/%3E%3Crect x='308' y='128' width='204' height='424' rx='16' fill='none' stroke='%23ffffff' stroke-opacity='.35' stroke-width='4'/%3E%3Ctext x='300' y='660' fill='%23ffffff' font-family='Arial,sans-serif' font-size='94' font-weight='700' text-anchor='middle'%3ENBA%3C/text%3E%3Ctext x='300' y='748' fill='%2393c5fd' font-family='Arial,sans-serif' font-size='94' font-weight='700' text-anchor='middle'%3ETV%3C/text%3E%3C/svg%3E"
 const STREMIO_CATALOG_URL =
     "https://streamio.watchthewolves.com/catalog/tv/eggtv-catalog.json"
-const CHANNELS = [
+
+type Channel = {
+    id: string
+    name: string
+    streamUrl: string
+    streamUrls?: string[]
+    poster?: string
+    description?: string
+}
+
+const CHANNELS: Channel[] = [
     {
         id: "wolves-live",
         name: "Wolves Live",
@@ -23,7 +41,38 @@ const CHANNELS = [
         poster: "https://image.tmdb.org/t/p/original/WGRQ8FpjkDTzivQJ43t94bOuY0.jpg",
         description: "24/7 Rick and Morty stream.",
     },
+    {
+        id: "nbc-hd",
+        name: "NBC HD",
+        streamUrl:
+            "https://nbculocallive.akamaized.net/hls/live/2037084/losangeles/stream1/master.m3u8",
+        streamUrls: [
+            "https://nbculocallive.akamaized.net/hls/live/2037084/losangeles/stream1/master.m3u8",
+            "https://nbculocallive.akamaized.net/hls/live/2037098/sandiego/stream1/master.m3u8",
+            "https://nbculocallive.akamaized.net/hls/live/2037096/lx/use1.m3u8",
+            "https://dn7vkzd5khpp3.cloudfront.net/master.m3u8",
+            "https://tvpass.org/live/nbc-knbc-los-angeles-ca/hd",
+            "https://tvpass.org/live/nbc-knbc-los-angeles-ca/sd",
+        ],
+        poster: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/NBC_logo.svg/512px-NBC_logo.svg.png",
+        description: "NBC local live stream in HD.",
+    },
+    {
+        id: "nba-tv",
+        name: "NBA TV",
+        streamUrl:
+            "https://amg00556-amg00556c3-firetv-us-6060.playouts.now.amagi.tv/playlist.m3u8",
+        streamUrls: [
+            "https://amg00556-amg00556c3-firetv-us-6060.playouts.now.amagi.tv/playlist.m3u8",
+            "https://pb-5pdyic0cu7tri.akamaized.net/NBA.m3u8",
+            "https://tvpass.org/live/NBATV/hd",
+            "https://tvpass.org/live/NBATV/sd",
+        ],
+        poster: NBA_TV_POSTER,
+        description: "NBA TV live feed.",
+    },
 ]
+
 const HLS_SCRIPT_URLS = [
     "https://cdn.jsdelivr.net/npm/hls.js@latest",
     "https://unpkg.com/hls.js@latest",
@@ -33,10 +82,15 @@ let hlsScriptPromise: Promise<void> | null = null
 let activeHls: any = null
 const PREHIDE_STYLE_ID = "tv-route-prehide-style"
 
+function getCurrentPath() {
+    if (typeof window === "undefined") return "/"
+    return window.location.pathname.replace(/\/+$/, "") || "/"
+}
+
 function installPrehideIfNeeded() {
     if (typeof window === "undefined" || typeof document === "undefined") return
-    const path = window.location.pathname.replace(/\/+$/, "") || "/"
-    if (path !== TV_ROUTE) return
+    const path = getCurrentPath()
+    if (path !== TV_ROUTE && path !== SECRET_LOOP_ROUTE) return
     if (document.getElementById(PREHIDE_STYLE_ID)) return
 
     const style = document.createElement("style")
@@ -58,6 +112,112 @@ function clearPrehide() {
 }
 
 installPrehideIfNeeded()
+
+function renderSecretLoopRoute() {
+    const body = document.body
+    const oldOverflow = body.style.overflow
+    body.style.overflow = "hidden"
+    clearPrehide()
+
+    const existing = document.getElementById(OVERLAY_ID) as HTMLDivElement | null
+    if (existing) {
+        return () => {
+            body.style.overflow = oldOverflow
+        }
+    }
+
+    const overlay = document.createElement("div")
+    overlay.id = OVERLAY_ID
+    overlay.style.position = "fixed"
+    overlay.style.inset = "0"
+    overlay.style.background = "black"
+    overlay.style.zIndex = "2147483647"
+    overlay.style.margin = "0"
+    overlay.style.overflow = "hidden"
+    overlay.style.display = "flex"
+    overlay.style.alignItems = "center"
+    overlay.style.justifyContent = "center"
+
+    const video = document.createElement("video")
+    video.autoplay = true
+    video.loop = true
+    video.muted = true
+    video.controls = true
+    video.playsInline = true
+    video.preload = "auto"
+    video.src = SECRET_LOOP_VIDEO_URL
+    video.setAttribute("playsinline", "")
+    video.setAttribute("webkit-playsinline", "")
+    video.style.width = "100vw"
+    video.style.height = "100vh"
+    video.style.objectFit = "contain"
+    overlay.appendChild(video)
+
+    const soundButton = document.createElement("button")
+    soundButton.type = "button"
+    soundButton.textContent = "Tap for sound"
+    soundButton.style.position = "fixed"
+    soundButton.style.left = "50%"
+    soundButton.style.bottom = "28px"
+    soundButton.style.transform = "translateX(-50%)"
+    soundButton.style.padding = "10px 14px"
+    soundButton.style.border = "1px solid rgba(255,255,255,0.22)"
+    soundButton.style.borderRadius = "999px"
+    soundButton.style.background = "rgba(15,23,42,0.78)"
+    soundButton.style.color = "white"
+    soundButton.style.fontSize = "14px"
+    soundButton.style.cursor = "pointer"
+    soundButton.style.backdropFilter = "blur(8px)"
+    overlay.appendChild(soundButton)
+
+    const directLink = document.createElement("a")
+    directLink.href = SECRET_LOOP_VIDEO_URL
+    directLink.textContent = "Open video directly"
+    directLink.style.position = "fixed"
+    directLink.style.right = "18px"
+    directLink.style.bottom = "18px"
+    directLink.style.color = "#cbd5e1"
+    directLink.style.fontSize = "12px"
+    directLink.style.textDecoration = "underline"
+    overlay.appendChild(directLink)
+
+    const playVideo = async () => {
+        try {
+            await video.play()
+        } catch {
+            // Ignore autoplay blocks; controls remain available.
+        }
+    }
+
+    const enableSound = async () => {
+        video.muted = false
+        soundButton.remove()
+        await playVideo()
+    }
+
+    soundButton.addEventListener("click", () => {
+        void enableSound()
+    })
+    video.addEventListener("click", () => {
+        if (!video.muted) return
+        void enableSound()
+    })
+    video.addEventListener("error", () => {
+        soundButton.textContent = "Video unavailable"
+    })
+
+    body.appendChild(overlay)
+    void playVideo()
+
+    return () => {
+        const currentPath = getCurrentPath()
+        if (currentPath !== SECRET_LOOP_ROUTE) {
+            video.pause()
+            overlay.remove()
+        }
+        body.style.overflow = oldOverflow
+    }
+}
 
 function loadHlsScript(): Promise<void> {
     if ((window as any).Hls) return Promise.resolve()
@@ -135,7 +295,6 @@ async function attachStream(video: HTMLVideoElement, streamUrl: string) {
     await loadHlsScript()
     const Hls = (window as any).Hls
     if (!Hls || !Hls.isSupported()) {
-        // Last fallback for apps/webviews with partial media support.
         video.src = streamUrl
         return
     }
@@ -153,6 +312,104 @@ async function safePlay(video: HTMLVideoElement) {
     } catch {
         return false
     }
+}
+
+async function waitForPlaybackReady(video: HTMLVideoElement) {
+    if (video.readyState >= 2) return true
+    return new Promise<boolean>((resolve) => {
+        let settled = false
+        const finish = (ok: boolean) => {
+            if (settled) return
+            settled = true
+            video.removeEventListener("loadedmetadata", onReady)
+            video.removeEventListener("canplay", onReady)
+            video.removeEventListener("error", onError)
+            resolve(ok)
+        }
+        const onReady = () => finish(true)
+        const onError = () => finish(false)
+
+        video.addEventListener("loadedmetadata", onReady, { once: true })
+        video.addEventListener("canplay", onReady, { once: true })
+        video.addEventListener("error", onError, { once: true })
+        setTimeout(
+            () => finish(video.readyState >= 2),
+            PLAYBACK_READY_TIMEOUT_MS
+        )
+    })
+}
+
+async function playWithRetries(
+    video: HTMLVideoElement,
+    attempts = 3,
+    retryDelayMs = 180
+) {
+    for (let index = 0; index < attempts; index++) {
+        const started = await safePlay(video)
+        if (started) return true
+        if (index < attempts - 1) {
+            await new Promise((resolve) => {
+                setTimeout(resolve, retryDelayMs)
+            })
+        }
+    }
+    return false
+}
+
+async function waitForPlaybackStarted(video: HTMLVideoElement) {
+    if (!video.paused && video.currentTime > 0) return true
+    return new Promise<boolean>((resolve) => {
+        let settled = false
+        const finish = (ok: boolean) => {
+            if (settled) return
+            settled = true
+            video.removeEventListener("playing", onPlaying)
+            video.removeEventListener("timeupdate", onTimeUpdate)
+            video.removeEventListener("error", onError)
+            resolve(ok)
+        }
+        const onPlaying = () => finish(true)
+        const onTimeUpdate = () => finish(true)
+        const onError = () => finish(false)
+
+        video.addEventListener("playing", onPlaying, { once: true })
+        video.addEventListener("timeupdate", onTimeUpdate, { once: true })
+        video.addEventListener("error", onError, { once: true })
+        setTimeout(
+            () => finish(!video.paused && video.currentTime > 0),
+            PLAYBACK_START_TIMEOUT_MS
+        )
+    })
+}
+
+function withCacheBust(streamUrl: string) {
+    if (!streamUrl.includes("tvpass.org/live/")) return streamUrl
+    const separator = streamUrl.includes("?") ? "&" : "?"
+    return `${streamUrl}${separator}cb=${Date.now()}`
+}
+
+async function startPlaybackForDevice(
+    video: HTMLVideoElement,
+    preferSound: boolean,
+    mobileDevice: boolean
+) {
+    await waitForPlaybackReady(video)
+    video.muted = true
+
+    const started = await playWithRetries(video, 4, 300)
+    if (!started) return false
+    const playbackStarted = await waitForPlaybackStarted(video)
+    if (!playbackStarted) return false
+
+    if (preferSound && !mobileDevice) {
+        video.muted = false
+        const soundStarted = await safePlay(video)
+        if (!soundStarted) {
+            video.muted = true
+        }
+    }
+
+    return true
 }
 
 function isTouchDevice() {
@@ -208,20 +465,57 @@ function setSelectedChannel(channelId: string) {
     window.history.replaceState({}, "", url.toString())
 }
 
+async function canLoadStreamManifest(streamUrl: string) {
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(() => {
+        controller.abort()
+    }, STREAM_HEALTHCHECK_TIMEOUT_MS)
+    try {
+        const response = await fetch(streamUrl, {
+            method: "GET",
+            mode: "cors",
+            cache: "no-store",
+            signal: controller.signal,
+        })
+        return response.ok
+    } catch {
+        return false
+    } finally {
+        window.clearTimeout(timeoutId)
+    }
+}
+
+function getChannelStreamCandidates(channel: Channel) {
+    const raw = [channel.streamUrl, ...(channel.streamUrls || [])]
+    const unique = new Set<string>()
+    raw.forEach((url) => {
+        const trimmed = String(url || "").trim()
+        if (!trimmed) return
+        unique.add(trimmed)
+    })
+    return Array.from(unique)
+}
+
 export const TV404Route: Override = () => {
     useLayoutEffect(() => {
-        const path = window.location.pathname.replace(/\/+$/, "") || "/"
+        const path = getCurrentPath()
+        if (path === SECRET_LOOP_ROUTE) {
+            return renderSecretLoopRoute()
+        }
         if (path !== TV_ROUTE) return
 
         const body = document.body
         const oldOverflow = body.style.overflow
         body.style.overflow = "hidden"
+        clearPrehide()
 
         const existing = document.getElementById(OVERLAY_ID) as
             | HTMLDivElement
             | null
         if (existing) {
-            return
+            return () => {
+                body.style.overflow = oldOverflow
+            }
         }
 
         const overlay = document.createElement("div")
@@ -233,7 +527,6 @@ export const TV404Route: Override = () => {
         overlay.style.margin = "0"
         overlay.style.overflow = "hidden"
         overlay.style.fontFamily = "sans-serif"
-        clearPrehide()
 
         const video = document.createElement("video")
         video.id = "player"
@@ -272,7 +565,8 @@ export const TV404Route: Override = () => {
         picker.style.flexDirection = "column"
         picker.style.justifyContent = "flex-start"
         picker.style.alignItems = "center"
-        picker.style.padding = "max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom))"
+        picker.style.padding =
+            "max(18px, env(safe-area-inset-top)) 16px max(18px, env(safe-area-inset-bottom))"
         picker.style.background =
             "radial-gradient(circle at 20% 20%, rgba(37,99,235,0.25), rgba(0,0,0,0.92) 42%)"
         picker.style.zIndex = "2147483647"
@@ -398,30 +692,54 @@ export const TV404Route: Override = () => {
             message.appendChild(directLink)
             overlay.appendChild(message)
         }
-        let guideChannels: Array<{
-            id: string
-            name: string
-            streamUrl: string
-            poster?: string
-            description?: string
-        }> = CHANNELS
+        let guideChannels: Channel[] = CHANNELS
+
+        const pickFallbackChannel = async (
+            attemptedIds: Set<string>
+        ): Promise<Channel | null> => {
+            for (const channel of guideChannels) {
+                if (attemptedIds.has(channel.id)) continue
+                const available = await canLoadStreamManifest(channel.streamUrl)
+                if (available) return channel
+            }
+            return (
+                guideChannels.find((channel) => !attemptedIds.has(channel.id)) ||
+                null
+            )
+        }
 
         const startStream = async (
-            channel: (typeof CHANNELS)[number],
-            preferSound: boolean
+            channel: Channel,
+            preferSound: boolean,
+            attemptedIds = new Set<string>()
         ) => {
+            attemptedIds.add(channel.id)
             try {
                 selectedChannel = channel
                 setSelectedChannel(channel.id)
                 renderGuideButtons(guideChannels)
-                await attachStream(video, channel.streamUrl)
-                if (preferSound) video.muted = false
-                let started = await safePlay(video)
-                if (!started && !video.muted) {
-                    video.muted = true
-                    started = await safePlay(video)
+                const mobileDevice = isTouchDevice()
+                const streamCandidates = getChannelStreamCandidates(channel)
+                let started = false
+                let lastError: unknown = null
+                for (const streamUrl of streamCandidates) {
+                    try {
+                        const attemptUrl = withCacheBust(streamUrl)
+                        await attachStream(video, attemptUrl)
+                        started = await startPlaybackForDevice(
+                            video,
+                            preferSound,
+                            mobileDevice
+                        )
+                        if (!started) continue
+                        break
+                    } catch (error) {
+                        lastError = error
+                    }
                 }
-                if (!started) return
+                if (!started) {
+                    throw lastError || new Error("No playable stream candidate")
+                }
                 picker.style.display = "none"
                 channelSwitchBar.style.display = "flex"
                 video.controls = true
@@ -430,19 +748,15 @@ export const TV404Route: Override = () => {
                 scheduleGuideHide(2200)
             } catch (error) {
                 console.error(error)
+                const fallbackChannel = await pickFallbackChannel(attemptedIds)
+                if (fallbackChannel) {
+                    return startStream(fallbackChannel, false, attemptedIds)
+                }
                 showError()
             }
         }
 
-        const renderPickerCards = (
-            channels: Array<{
-                id: string
-                name: string
-                streamUrl: string
-                poster?: string
-                description?: string
-            }>
-        ) => {
+        const renderPickerCards = (channels: Channel[]) => {
             pickerGrid.innerHTML = ""
             channels.forEach((channel) => {
                 const button = document.createElement("button")
@@ -503,15 +817,7 @@ export const TV404Route: Override = () => {
             applyResponsiveLayout()
         }
 
-        const renderGuideButtons = (
-            channels: Array<{
-                id: string
-                name: string
-                streamUrl: string
-                poster?: string
-                description?: string
-            }>
-        ) => {
+        const renderGuideButtons = (channels: Channel[]) => {
             channelSwitchBar.innerHTML = ""
             channels.forEach((channel) => {
                 const switchButton = document.createElement("button")
@@ -642,7 +948,6 @@ export const TV404Route: Override = () => {
             window.addEventListener("keydown", onDesktopKey)
         }
 
-        // Intentionally persist while on /tv to avoid Framer remount flicker.
         return () => {
             window.removeEventListener("resize", applyResponsiveLayout)
             if (onDesktopMove) {
@@ -652,8 +957,7 @@ export const TV404Route: Override = () => {
                 window.removeEventListener("keydown", onDesktopKey)
             }
             clearGuideTimer()
-            const currentPath =
-                window.location.pathname.replace(/\/+$/, "") || "/"
+            const currentPath = getCurrentPath()
             if (currentPath !== TV_ROUTE) {
                 teardownStream(video)
                 overlay.remove()

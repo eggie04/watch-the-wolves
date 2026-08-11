@@ -8,7 +8,8 @@
     "framer:push": "node --env-file=.env scripts/framer-sync.mjs --publish",
     "framer:sync:force": "node --env-file=.env scripts/framer-sync.mjs --no-publish --allow-overwrite",
     "framer:push:force": "node --env-file=.env scripts/framer-sync.mjs --publish --allow-overwrite",
-    "stremio:addon": "node --env-file=.env scripts/stremio-addon.mjs"
+    "stremio:addon": "node --env-file=.env scripts/stremio-addon.mjs",
+    "video:host": "node scripts/video-host.mjs"
   },
   "dependencies": {
     "framer-api": "^0.1.1",
