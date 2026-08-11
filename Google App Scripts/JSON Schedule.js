@@ -170,7 +170,7 @@ function setTvmFeedConfig_(config) {
   }
 }
 
-const WTW_IMPORT_STATE_KEY = "WTW_IMPORT_FULL_SCHEDULE_STATE_V5";
+const WTW_IMPORT_STATE_KEY = "WTW_IMPORT_FULL_SCHEDULE_STATE_V6";
 const WTW_IMPORT_RESUME_HANDLER = "resumeImportFullNBASchedule2025";
 const WTW_IMPORT_DIAG_KEY = "WTW_IMPORT_FULL_2025_LAST_DIAG";
 const WTW_IMPORT_BATCH_SIZE = 100;
@@ -183,7 +183,8 @@ function getRelevantEspnSeasonYears_() {
   const now = new Date();
   const calendarYear = now.getFullYear();
   const currentSeasonEndYear = now.getMonth() >= 6 ? calendarYear + 1 : calendarYear;
-  return [currentSeasonEndYear - 1, currentSeasonEndYear];
+  // Import the current/upcoming season first so new games appear immediately.
+  return [currentSeasonEndYear, currentSeasonEndYear - 1];
 }
 
 function getRelevantNbaSeasonLabels_() {
@@ -212,6 +213,9 @@ function buildEspnScoreboardSegments_() {
       segments.push({
         url: `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates=${start}-${end}&limit=1000`,
         seasonYear,
+        start,
+        end,
+        month: monthStart.getUTCMonth(),
         label: `${seasonYear - 1}-${String(seasonYear).slice(-2)} ${Utilities.formatDate(monthStart, "UTC", "MMM")}`,
       });
     }
@@ -233,6 +237,99 @@ function getEspnScoreValue_(competitor) {
   if (raw && typeof raw === "object" && raw.value != null) return Number(raw.value);
   if (raw !== "" && raw != null && isFinite(Number(raw))) return Number(raw);
   return "";
+}
+
+function httpsEspnRef_(raw) {
+  return String(raw || "").replace(/^http:\/\//i, "https://");
+}
+
+function fetchEspnCorePreseasonEvents_(seasonYear) {
+  const cacheKey = `WTW_ESPN_CORE_PRE_${seasonYear}_V1`;
+  const cached = CacheService.getScriptCache().get(cacheKey);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (e) {
+      // Refresh malformed cache entries.
+    }
+  }
+
+  const listUrl = `https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/${seasonYear}/types/1/teams/16/events?limit=1000`;
+  const listResponse = UrlFetchApp.fetch(listUrl, { muteHttpExceptions: true });
+  const listCode = Number(listResponse.getResponseCode() || 0);
+  if (listCode < 200 || listCode >= 300) {
+    throw new Error(`ESPN core preseason list failed for ${seasonYear} (${listCode})`);
+  }
+
+  const refs = (JSON.parse(listResponse.getContentText()).items || [])
+    .map(item => httpsEspnRef_(item?.$ref))
+    .filter(Boolean);
+  if (!refs.length) return [];
+
+  const eventResponses = UrlFetchApp.fetchAll(
+    refs.map(url => ({ url, muteHttpExceptions: true }))
+  );
+  const coreEvents = eventResponses
+    .filter(response => Number(response.getResponseCode() || 0) >= 200 && Number(response.getResponseCode() || 0) < 300)
+    .map(response => JSON.parse(response.getContentText()));
+
+  const teamRefs = {};
+  coreEvents.forEach(event => {
+    (event?.competitions?.[0]?.competitors || []).forEach(competitor => {
+      const ref = httpsEspnRef_(competitor?.team?.$ref);
+      if (ref) teamRefs[String(competitor.id || "")] = ref;
+    });
+  });
+
+  const teamIds = Object.keys(teamRefs);
+  const teamResponses = teamIds.length
+    ? UrlFetchApp.fetchAll(teamIds.map(id => ({ url: teamRefs[id], muteHttpExceptions: true })))
+    : [];
+  const teamsById = {};
+  teamResponses.forEach((response, index) => {
+    const code = Number(response.getResponseCode() || 0);
+    if (code < 200 || code >= 300) return;
+    const team = JSON.parse(response.getContentText());
+    teamsById[teamIds[index]] = {
+      id: String(team.id || teamIds[index]),
+      displayName: team.displayName || team.name || "Unknown",
+      abbreviation: team.abbreviation || "",
+      logo: team?.logos?.[0]?.href || "",
+      logos: team.logos || [],
+    };
+  });
+
+  const normalized = coreEvents.map(event => {
+    const competition = event?.competitions?.[0] || {};
+    return {
+      id: String(event.id || competition.id || ""),
+      date: event.date || competition.date,
+      season: { year: seasonYear, type: 1, slug: "preseason" },
+      status: { type: { state: "pre", completed: false, description: "Scheduled" } },
+      competitions: [{
+        id: String(competition.id || event.id || ""),
+        competitors: (competition.competitors || []).map(competitor => ({
+          id: String(competitor.id || ""),
+          homeAway: competitor.homeAway,
+          team: teamsById[String(competitor.id || "")] || {
+            id: String(competitor.id || ""),
+            displayName: `Team ${competitor.id || ""}`,
+            logo: "",
+            logos: [],
+          },
+          score: "",
+        })),
+        broadcasts: [],
+        notes: competition.notes || [],
+      }],
+    };
+  }).filter(event => event.id && event.date);
+
+  const serialized = JSON.stringify(normalized);
+  if (serialized.length < 95000) {
+    CacheService.getScriptCache().put(cacheKey, serialized, 21600);
+  }
+  return normalized;
 }
 
 function writeImportDiag_(payload) {
@@ -708,13 +805,28 @@ function importFullNBASchedule2025() {
       },
     });
     const code = Number(response?.getResponseCode?.() || 0);
-    if (code < 200 || code >= 300) {
+    let data;
+    const currentSeasonYear = Math.max.apply(null, getRelevantEspnSeasonYears_());
+    const canUseCorePreseason =
+      season.seasonYear === currentSeasonYear &&
+      (season.month === 8 || season.month === 9);
+    if (code >= 200 && code < 300) {
+      data = JSON.parse(response.getContentText());
+    } else if (canUseCorePreseason) {
+      const fallbackEvents = fetchEspnCorePreseasonEvents_(season.seasonYear);
+      data = { events: fallbackEvents };
+      Logger.log(
+        `ESPN scoreboard returned ${code} for ${season.label}; ` +
+        `using sports.core preseason fallback (${fallbackEvents.length} events).`
+      );
+    } else {
       throw new Error(`ESPN scoreboard request failed for ${season.label} (${code})`);
     }
 
-    const data = JSON.parse(response.getContentText());
     const events = (data.events || []).filter(event => {
       if (Number(event?.season?.year || 0) !== season.seasonYear) return false;
+      const eventDateKey = formatEspnDate_(new Date(event.date));
+      if (eventDateKey < season.start || eventDateKey > season.end) return false;
       const competitors = event?.competitions?.[0]?.competitors || [];
       return competitors.some(c => String(c?.team?.id || "") === "16");
     });
