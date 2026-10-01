@@ -178,6 +178,12 @@ const WTW_WOLVES_TEAM_ID = 1610612750;
 const WTW_NBA_TEAM_SCHEDULE_API_URL = "https://www.nba.com/timberwolves/api/schedule";
 const WTW_NBA_JERSEY_CACHE_KEY = "WTW_NBA_SCHEDULE_JERSEY_MAP_V1";
 const WTW_JINA_PROXY_PREFIX = "https://r.jina.ai/http://";
+// League-wide schedule JSON (same feed that powers nba.com schedule pages).
+const WTW_NBA_LEAGUE_SCHEDULE_URL = "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json";
+const WTW_NBA_BROADCAST_CACHE_KEY = "WTW_NBA_SCHEDULE_BROADCAST_MAP_V1";
+// Local TV carrier for the Timberwolves: non-national games without broadcast
+// data from either source are labeled with this instead of "TBD".
+const WTW_DEFAULT_LOCAL_BROADCAST = "DAZN";
 
 function getRelevantEspnSeasonYears_() {
   const now = new Date();
@@ -523,6 +529,111 @@ function getOrRefreshNbaScheduleJerseyMap_(forceRefresh) {
   };
 }
 
+function getNbaScheduleBroadcastMapFromCache_() {
+  const raw = CacheService.getScriptCache().get(WTW_NBA_BROADCAST_CACHE_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function putNbaScheduleBroadcastMapInCache_(map) {
+  const raw = JSON.stringify(map || {});
+  if (raw.length > 95000) {
+    Logger.log(`NBA schedule broadcast cache payload too large for CacheService (${raw.length} chars)`);
+    return;
+  }
+  CacheService.getScriptCache().put(WTW_NBA_BROADCAST_CACHE_KEY, raw, 21600);
+}
+
+// nba.com's league schedule feed (the same data behind nba.com/timberwolves/schedule),
+// including per-game broadcasters. Raw names are stored; normalization happens
+// inside the import where the TV_ALIAS_MAP is in scope.
+function fetchNbaBroadcastMapFromApi_() {
+  const map = {};
+  let gamesSeen = 0;
+  let gamesWithBroadcast = 0;
+
+  const headers = { Accept: "application/json", "User-Agent": "Mozilla/5.0" };
+  let res = UrlFetchApp.fetch(WTW_NBA_LEAGUE_SCHEDULE_URL, { muteHttpExceptions: true, headers });
+  let code = Number(res.getResponseCode() || 0);
+  if (code < 200 || code >= 300) {
+    const proxyUrl = `${WTW_JINA_PROXY_PREFIX}${WTW_NBA_LEAGUE_SCHEDULE_URL.replace(/^https?:\/\//i, "")}`;
+    Logger.log(`NBA league schedule direct fetch returned HTTP ${code}; retrying via proxy`);
+    res = UrlFetchApp.fetch(proxyUrl, {
+      muteHttpExceptions: true,
+      headers: { Accept: "text/plain", "User-Agent": "Mozilla/5.0" },
+    });
+    code = Number(res.getResponseCode() || 0);
+  }
+  if (code < 200 || code >= 300) {
+    throw new Error(`NBA league schedule fetch failed (HTTP ${code})`);
+  }
+  const text = String(res.getContentText() || "");
+  const jsonStart = text.indexOf("{");
+  if (jsonStart < 0) throw new Error("NBA league schedule response did not contain JSON");
+  const root = JSON.parse(text.slice(jsonStart));
+
+  const gameDates = root?.leagueSchedule?.gameDates || [];
+  gameDates.forEach(gameDate => {
+    (gameDate?.games || []).forEach(game => {
+      const homeId = Number(game?.homeTeam?.teamId || 0);
+      const awayId = Number(game?.awayTeam?.teamId || 0);
+      const wolvesHome = homeId === WTW_WOLVES_TEAM_ID;
+      const wolvesAway = awayId === WTW_WOLVES_TEAM_ID;
+      if (!wolvesHome && !wolvesAway) return;
+      gamesSeen += 1;
+
+      const opp = wolvesHome ? game.awayTeam : game.homeTeam;
+      const opponent = `${opp?.teamCity || ""} ${opp?.teamName || ""}`.trim() || String(opp?.teamName || "");
+      const dateRaw = game?.gameDateUTC || game?.gameTimeUTC || "";
+      const dt = new Date(dateRaw);
+      if (!opponent || isNaN(dt.getTime())) return;
+
+      const formattedDate = Utilities.formatDate(dt, Session.getScriptTimeZone(), "MMM dd, yyyy");
+      const homeAway = wolvesHome ? "Home" : "Away";
+      const joinKey = makeCanonicalJoinKey_(formattedDate, opponent, homeAway);
+      if (!joinKey) return;
+
+      const bc = game?.broadcasters || {};
+      const namesOf = list =>
+        (Array.isArray(list) ? list : [])
+          .map(b => String(b?.shortName || b?.longName || "").trim())
+          .filter(Boolean);
+      const national = namesOf(bc.nationalBroadcasters);
+      const localPool = wolvesHome ? namesOf(bc.homeTvBroadcasters) : namesOf(bc.awayTvBroadcasters);
+      if (national.length || localPool.length) gamesWithBroadcast += 1;
+
+      map[joinKey] = { local: localPool, national };
+    });
+  });
+
+  return { map, gamesSeen, gamesWithBroadcast };
+}
+
+function getOrRefreshNbaBroadcastMap_(forceRefresh) {
+  if (!forceRefresh) {
+    const cached = getNbaScheduleBroadcastMapFromCache_();
+    const size = Object.keys(cached).length;
+    if (size) {
+      return { map: cached, cacheHit: true, mapSize: size, gamesSeen: null, gamesWithBroadcast: null };
+    }
+  }
+
+  const fresh = fetchNbaBroadcastMapFromApi_();
+  putNbaScheduleBroadcastMapInCache_(fresh.map);
+  return {
+    map: fresh.map,
+    cacheHit: false,
+    mapSize: Object.keys(fresh.map).length,
+    gamesSeen: fresh.gamesSeen,
+    gamesWithBroadcast: fresh.gamesWithBroadcast,
+  };
+}
+
 function fetchTeamScheduleSeasonJsonViaProxy_(seasonLabel) {
   const directUrl = `${WTW_NBA_TEAM_SCHEDULE_API_URL}?season=${encodeURIComponent(seasonLabel)}`;
   const proxyUrl = `${WTW_JINA_PROXY_PREFIX}${directUrl.replace(/^https?:\/\//i, "")}`;
@@ -701,6 +812,7 @@ function importFullNBASchedule2025() {
     { match: /\bKARE\b|\bKARE\s*11\b|\bKARE11\b/gi, label: "KARE 11" },
     { match: /\bWUCW\b|\bCW\s*Twin\s*Cities\b/gi, label: "CW Twin Cities (WUCW)" },
     { match: /\bpeacock\b/gi, label: "Peacock" },
+    { match: /\bDAZN\b/gi, label: "DAZN" },
     { match: /\bNBC\b(?!\s*Sports\s*North)/gi, label: "NBC" },
     { match: /\bESPN\b/gi, label: "ESPN" },
     { match: /\bABC\b/gi, label: "ABC" },
@@ -822,6 +934,17 @@ function importFullNBASchedule2025() {
     sourceTransport: "jina-proxy",
   });
 
+  // nba.com broadcast data (primary source for the "TV Broadcast" column;
+  // ESPN fills gaps in the row loop below).
+  const nbaBroadcastMapResult = getOrRefreshNbaBroadcastMap_(false);
+  const nbaBroadcastByJoinKey = nbaBroadcastMapResult.map || {};
+  importCheckpoint_(runId, startedMs, "nba_schedule_broadcast_map", {
+    cachedEntries: Object.keys(nbaBroadcastByJoinKey).length,
+    cacheHit: !!nbaBroadcastMapResult.cacheHit,
+    gamesSeen: nbaBroadcastMapResult.gamesSeen,
+    gamesWithBroadcast: nbaBroadcastMapResult.gamesWithBroadcast,
+  });
+
   const rows = [];
   let seasonEventCount = 0;
   let batchStart = 0;
@@ -928,10 +1051,18 @@ function importFullNBASchedule2025() {
 
       const logo = opp.team.logos?.[0]?.href || opp.team.logo || "";
 
-      let tv = "";
-      let nat = "";
+      const nbaBc = nbaBroadcastByJoinKey[canonicalJoinKey] || null;
+      const nbaLocalRaw = nbaBc && Array.isArray(nbaBc.local) && nbaBc.local[0] ? String(nbaBc.local[0]) : "";
+      const nbaNatRaw = nbaBc && Array.isArray(nbaBc.national) && nbaBc.national[0] ? String(nbaBc.national[0]) : "";
+
+      let tv = nbaLocalRaw
+        ? normalize(nbaLocalRaw) || nbaLocalRaw
+        : nbaNatRaw
+          ? normalize(nbaNatRaw) || nbaNatRaw
+          : "";
+      let nat = nbaNatRaw ? normalize(nbaNatRaw) || nbaNatRaw : "";
       let lp = "";
-      let natFlag = "No";
+      let natFlag = nat ? "Yes" : "No";
       let firstTv = "";
       let firstStream = "";
       let sawOppRSN = false;
@@ -965,6 +1096,8 @@ function importFullNBASchedule2025() {
         if (!tv && firstTv) tv = firstTv;
         else if (!tv && firstStream) tv = firstStream;
         else if (!tv && lp) tv = lp;
+        // No broadcast data from nba.com or ESPN: assume the local carrier.
+        if (!tv) tv = WTW_DEFAULT_LOCAL_BROADCAST;
 
         if (nat) natFlag = "Yes";
       }
